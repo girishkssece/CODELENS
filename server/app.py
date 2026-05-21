@@ -37,12 +37,28 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no backt
     "space_complexity": "space complexity like O(1), O(n) etc",
     "lines": <number of lines>,
     "summary": true,
-    "steps": [...]
-    }}
+    "steps": [
       {{
         "title": "Short step title (5-8 words)",
         "explanation": "Clear plain English explanation of what happens in this step.",
         "code": "Relevant code snippet (1-3 lines max)"
+      }}
+    ]
+  }},
+  "flow": {{
+    "nodes": [
+      {{
+        "id": "1",
+        "label": "Short label (2-4 words)",
+        "type": "start/end/process/decision/loop",
+        "description": "One line explanation"
+      }}
+    ],
+    "edges": [
+      {{
+        "from": "1",
+        "to": "2",
+        "label": "optional edge label like yes/no"
       }}
     ]
   }},
@@ -62,7 +78,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no backt
   ]
 }}
 
-Give 4-8 steps for visual. Give at least 1 strength and 1 info item in review. Include all meaningful variables.
+Give 4-8 steps for visual. Give 5-10 nodes for flow with proper edges. Give at least 1 strength and 1 info item in review. Include all meaningful variables.
 
 CODE TO ANALYZE:
 {code}

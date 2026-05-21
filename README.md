@@ -45,7 +45,7 @@
 
 1. **Clone the repo:**
 ```bash
-git clone https://github.com/YourUsername/codelens.git
+git clone https://github.com/girishkssece/CODELENS.git
 cd codelens
 ```
 

@@ -6,6 +6,7 @@ import VariablesPanel from './components/VariablesPanel'
 import axios from 'axios'
 import './App.css'
 import ComplexityGraph from './components/ComplexityGraph'
+import FlowDiagram from './components/FlowDiagram'
 
 function App() {
   const [code, setCode] = useState('')
@@ -546,6 +547,12 @@ const newCode = () => {
               📊 Complexity
             </button>
             <button
+              className={`tab ${activeTab === 'flow' ? 'active' : ''}`}
+              onClick={() => setActiveTab('flow')}
+            >
+              🔀 Flow
+            </button>
+            <button
               className={`tab ${activeTab === 'output' ? 'active' : ''}`}
               onClick={() => setActiveTab('output')}
             >
@@ -581,6 +588,7 @@ const newCode = () => {
                 {activeTab === 'review' && <ReviewPanel data={result.review} />}
                 {activeTab === 'vars' && <VariablesPanel data={result.variables} />}
                 {activeTab === 'complexity' && <ComplexityGraph data={result.visual} />}
+                {activeTab === 'flow' && <FlowDiagram data={result.flow} />}
               </>
             )}
 
