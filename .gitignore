@@ -1,0 +1,16 @@
+# Environment files
+server/.env
+
+# Node modules
+client/node_modules/
+
+# Python cache
+server/__pycache__/
+server/*.pyc
+
+# Build files
+client/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
