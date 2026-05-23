@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import re
 from ml_detector import detector
+from executor import execute_python_steps
 
 load_dotenv()
 
@@ -247,6 +248,28 @@ def detect_language():
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/execute", methods=["POST"])
+def execute():
+    data = request.get_json()
+    code = data.get("code", "")
+    language = data.get("language", "Python")
+
+    if not code:
+        return jsonify({"error": "No code provided"}), 400
+
+    if language != "Python":
+        return jsonify({
+            "error": f"Step-by-step execution currently supports Python only. More languages coming soon!",
+            "steps": [],
+            "total_steps": 0
+        }), 400
+
+    try:
+        result = execute_python_steps(code)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "steps": [], "total_steps": 0}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

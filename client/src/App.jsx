@@ -7,6 +7,8 @@ import axios from 'axios'
 import './App.css'
 import ComplexityGraph from './components/ComplexityGraph'
 import FlowDiagram from './components/FlowDiagram'
+import Executor from './components/Executor'
+import CodeDiff from './components/CodeDiff'
 
 function App() {
   const [code, setCode] = useState('')
@@ -553,11 +555,23 @@ const newCode = () => {
               🔀 Flow
             </button>
             <button
+              className={`tab ${activeTab === 'executor' ? 'active' : ''}`}
+              onClick={() => setActiveTab('executor')}
+            >
+              ⚡ Executor
+            </button>
+            <button
               className={`tab ${activeTab === 'output' ? 'active' : ''}`}
               onClick={() => setActiveTab('output')}
             >
               ⚡ Output
             </button>
+            <button
+             className={`tab ${activeTab === 'diff' ? 'active' : ''}`}
+             onClick={() => setActiveTab('diff')}
+            >
+          🔀 Diff
+           </button>
           </div>
 
           <div className="output-area">
@@ -589,6 +603,10 @@ const newCode = () => {
                 {activeTab === 'vars' && <VariablesPanel data={result.variables} />}
                 {activeTab === 'complexity' && <ComplexityGraph data={result.visual} />}
                 {activeTab === 'flow' && <FlowDiagram data={result.flow} />}
+                {activeTab === 'executor' && (
+                  <Executor code={code} language={language} />
+                )}
+                {activeTab === 'diff' && <CodeDiff />}
               </>
             )}
 
