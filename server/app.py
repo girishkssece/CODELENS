@@ -270,6 +270,226 @@ def execute():
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e), "steps": [], "total_steps": 0}), 500
+    
+@app.route("/fix", methods=["POST"])
+def fix_code():
+    data = request.get_json()
+    code = data.get("code", "")
+    language = data.get("language", "auto")
+
+    if not code:
+        return jsonify({"error": "No code provided"}), 400
+
+    lang_str = "auto-detect the language and" if language == "auto" else f"treat this as {language} code and"
+
+    prompt = f"""You are an expert code fixer and optimizer. The user has pasted the following code. Please {lang_str} analyze, fix, and optimize it.
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no backticks, no explanation outside JSON):
+{{
+  "original_code": "the original code as-is",
+  "fixed_code": "the fully fixed and optimized version of the code",
+  "language": "detected language",
+  "changes": [
+    {{
+      "type": "bug_fix/optimization/style/security",
+      "title": "Short title of change",
+      "description": "What was wrong and what was fixed",
+      "line": <line number or null>
+    }}
+  ],
+  "summary": "Overall summary of what was fixed and optimized",
+  "score_before": <code quality score 0-100>,
+  "score_after": <code quality score 0-100>
+}}
+
+Be thorough — fix ALL bugs, optimize ALL inefficiencies, improve readability. If code is already perfect, still return the structure with empty changes array.
+
+CODE TO FIX:
+{code}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert code fixer. Always respond with valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+
+        text = response.choices[0].message.content
+        clean = text.replace("```json", "").replace("```", "").strip()
+        result = json.loads(clean)
+        return jsonify(result)
+
+    except json.JSONDecodeError:
+        return jsonify({"error": "Failed to parse AI response"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/explain", methods=["POST"])
+def explain_code():
+    data = request.get_json()
+    code = data.get("code", "")
+    language = data.get("language", "auto")
+    level = data.get("level", "simple")
+
+    if not code:
+        return jsonify({"error": "No code provided"}), 400
+
+    lang_str = "auto-detect the language and" if language == "auto" else f"treat this as {language} code and"
+
+    level_prompts = {
+        "eli5": "Explain like I'm 5 years old. Use very simple words, fun analogies and real-world examples a child would understand.",
+        "simple": "Explain in simple English for a beginner programmer. Avoid jargon.",
+        "intermediate": "Explain for an intermediate developer. Use proper technical terms but keep it clear.",
+        "expert": "Explain in depth for an expert developer. Include technical details, patterns and best practices."
+    }
+
+    level_prompt = level_prompts.get(level, level_prompts["simple"])
+
+    prompt = f"""You are a code explainer. The user has pasted the following code. Please {lang_str} explain it.
+
+{level_prompt}
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no backticks, no explanation outside JSON):
+{{
+  "title": "What this code does in one line",
+  "language": "detected language",
+  "summary": "2-3 sentence plain English summary",
+  "analogy": "A fun real-world analogy that explains what this code does",
+  "sections": [
+    {{
+      "heading": "Section heading",
+      "explanation": "Plain English explanation of this section",
+      "code": "relevant code snippet"
+    }}
+  ],
+  "key_concepts": [
+    {{
+      "concept": "concept name",
+      "explanation": "what it means in simple terms"
+    }}
+  ],
+  "fun_fact": "An interesting fact about this code or the concepts it uses"
+}}
+
+Give 3-6 sections and 2-5 key concepts.
+
+CODE TO EXPLAIN:
+{code}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a friendly code explainer. Always respond with valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        text = response.choices[0].message.content
+        clean = text.replace("```json", "").replace("```", "").strip()
+        result = json.loads(clean)
+        return jsonify(result)
+    except json.JSONDecodeError:
+        return jsonify({"error": "Failed to parse AI response"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/visualize-algo", methods=["POST"])
+def visualize_algo():
+    data = request.get_json()
+    code = data.get("code", "")
+    language = data.get("language", "auto")
+
+    if not code:
+        return jsonify({"error": "No code provided"}), 400
+
+    lang_str = "auto-detect the language and" if language == "auto" else f"treat this as {language} code and"
+
+    prompt = f"""Analyze this code and return visualization data as JSON.
+
+CODE:
+{code}
+
+Return ONLY this JSON structure, nothing else:
+{{
+  "algo_type": "recursion",
+  "title": "Algorithm name here",
+  "description": "One line description",
+  "time_complexity": "O(n)",
+  "space_complexity": "O(n)",
+  "tree_nodes": [
+    {{"id": "n1", "value": "fib(5)", "label": "fib(5)", "left": "n2", "right": "n3", "parent": null, "depth": 0, "x_offset": 0}},
+    {{"id": "n2", "value": "fib(4)", "label": "fib(4)", "left": "n4", "right": "n5", "parent": "n1", "depth": 1, "x_offset": -1}},
+    {{"id": "n3", "value": "fib(3)", "label": "fib(3)", "left": null, "right": null, "parent": "n1", "depth": 1, "x_offset": 1}}
+  ],
+  "steps": [
+    {{"id": "s1", "node_id": "n1", "operation": "CALL", "description": "Call fib(5)", "code_line": 1, "visited_nodes": [], "output": [], "highlighted_nodes": ["n1"], "edge_from": null, "edge_to": null}},
+    {{"id": "s2", "node_id": "n2", "operation": "CALL", "description": "Call fib(4)", "code_line": 4, "visited_nodes": ["n1"], "output": [], "highlighted_nodes": ["n2"], "edge_from": "n1", "edge_to": "n2"}},
+    {{"id": "s3", "node_id": "n3", "operation": "RETURN", "description": "Return fib(3)", "code_line": 2, "visited_nodes": ["n1", "n2"], "output": ["fib(3)"], "highlighted_nodes": ["n3"], "edge_from": "n1", "edge_to": "n3"}}
+  ],
+  "final_output": ["5"],
+  "total_steps": 3
+}}
+
+Generate 8-15 nodes and 8-15 steps showing actual execution. Return ONLY JSON, no explanation.
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an algorithm visualization engine. Always respond with valid JSON only. No markdown."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        text = response.choices[0].message.content
+        print("AI RESPONSE:", text[:500])  # add this line
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1:
+            clean = text[start:end+1]
+        else:
+            clean = text.replace("```json", "").replace("```", "").strip()
+            
+        result = json.loads(clean)
+        return jsonify(result)
+    except json.JSONDecodeError as e:
+        # Try to extract JSON from response
+        try:
+            import re
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                return jsonify(result)
+        except:
+            pass
+        return jsonify({"error": "Failed to parse AI response. Try again!"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

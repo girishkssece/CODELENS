@@ -9,6 +9,10 @@ import ComplexityGraph from './components/ComplexityGraph'
 import FlowDiagram from './components/FlowDiagram'
 import Executor from './components/Executor'
 import CodeDiff from './components/CodeDiff'
+import CodeFixer from './components/CodeFixer'
+import CodeTemplates from './components/CodeTemplates'
+import CodeExplainer from './components/CodeExplainer'
+import AlgoVisualizer from './components/AlgoVisualizer'
 
 function App() {
   const [code, setCode] = useState('')
@@ -20,6 +24,8 @@ function App() {
   const [darkMode, setDarkMode] = useState(true)
   const [runOutput, setRunOutput] = useState(null)
   const [runLoading, setRunLoading] = useState(false)
+  const [historySearch, setHistorySearch] = useState('')
+  const [fontSize, setFontSize] = useState(13)
   const [history, setHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('codelens-history')
@@ -29,6 +35,7 @@ function App() {
     }
   })
   const [showHistory, setShowHistory] = useState(false)
+  const [showTemplates, setShowTemplates] = useState(false)
   const [mlDetection, setMlDetection] = useState(null)
 
   const analyzeCode = async () => {
@@ -69,55 +76,55 @@ function App() {
   }
 
   const clearAll = () => {
-  setCode('')
-  setResult(null)
-  setError(null)
-  setRunOutput(null)
-  setMlDetection(null)
-  setLanguage('auto')  // reset dropdown
-}
-
-const newCode = () => {
-  if (code.trim() && result) {
-    const historyItem = {
-      id: Date.now(),
-      code: code,
-      language: language,
-      timestamp: new Date().toLocaleString(),
-      result: result,
-      preview: code.slice(0, 60) + (code.length > 60 ? '...' : '')
-    }
-    const newHistory = [historyItem, ...history.slice(0, 9)]
-    setHistory(newHistory)
-    localStorage.setItem('codelens-history', JSON.stringify(newHistory))
+    setCode('')
+    setResult(null)
+    setError(null)
+    setRunOutput(null)
+    setMlDetection(null)
+    setLanguage('auto')  // reset dropdown
   }
-  setCode('')
-  setResult(null)
-  setError(null)
-  setRunOutput(null)
-  setMlDetection(null)
-  setLanguage('auto')
-}
 
- const detectLanguage = async (codeText) => {
-  if (!codeText || codeText.length < 10) return
-  try {
-    const response = await axios.post('http://localhost:5000/detect-language', {
-      code: codeText
-    })
-    setMlDetection(response.data)
-    
-    // Always auto-set if confidence >= 70
-    if (response.data.confidence >= 70) {
-      setLanguage(response.data.language)
-    } else {
-      setLanguage('auto')
+  const newCode = () => {
+    if (code.trim() && result) {
+      const historyItem = {
+        id: Date.now(),
+        code: code,
+        language: language,
+        timestamp: new Date().toLocaleString(),
+        result: result,
+        preview: code.slice(0, 60) + (code.length > 60 ? '...' : '')
+      }
+      const newHistory = [historyItem, ...history.slice(0, 9)]
+      setHistory(newHistory)
+      localStorage.setItem('codelens-history', JSON.stringify(newHistory))
     }
-
-  } catch (err) {
-    console.error('ML detection failed:', err)
+    setCode('')
+    setResult(null)
+    setError(null)
+    setRunOutput(null)
+    setMlDetection(null)
+    setLanguage('auto')
   }
-}
+
+  const detectLanguage = async (codeText) => {
+    if (!codeText || codeText.length < 10) return
+    try {
+      const response = await axios.post('http://localhost:5000/detect-language', {
+        code: codeText
+      })
+      setMlDetection(response.data)
+
+      // Always auto-set if confidence >= 70
+      if (response.data.confidence >= 70) {
+        setLanguage(response.data.language)
+      } else {
+        setLanguage('auto')
+      }
+
+    } catch (err) {
+      console.error('ML detection failed:', err)
+    }
+  }
 
   const runCode = async () => {
     if (!code.trim()) {
@@ -152,9 +159,9 @@ const newCode = () => {
   }
 
   const clearHistory = () => {
-  setHistory([])
-  localStorage.removeItem('codelens-history')
-}
+    setHistory([])
+    localStorage.removeItem('codelens-history')
+  }
 
   const exportPDF = async () => {
     if (!result) {
@@ -360,6 +367,12 @@ const newCode = () => {
     doc.save(`codelens-report-${Date.now()}.pdf`)
   }
 
+  const filteredHistory = history.filter(item =>
+    item.preview.toLowerCase().includes(historySearch.toLowerCase()) ||
+    item.language.toLowerCase().includes(historySearch.toLowerCase()) ||
+    item.timestamp.toLowerCase().includes(historySearch.toLowerCase())
+  )
+
   return (
     <div className={`app-container ${darkMode ? 'dark' : 'light'}`}>
       {/* Header */}
@@ -435,13 +448,43 @@ const newCode = () => {
         </button>
 
         <button
+          className="btn templates"
+          onClick={() => setShowTemplates(!showTemplates)}
+        >
+          📋 Templates
+        </button>
+
+        <button
           className="btn export"
           onClick={exportPDF}
           disabled={!result}
         >
           📤 Export PDF
         </button>
+
+        <div className="font-controls">
+          <button className="font-btn" onClick={() => setFontSize(p => Math.max(10, p - 1))}>A-</button>
+          <span className="font-size-label">{fontSize}px</span>
+          <button className="font-btn" onClick={() => setFontSize(p => Math.min(20, p + 1))}>A+</button>
+        </div>
       </div>
+
+      {showTemplates && (
+        <div className="templates-wrapper">
+          <div className="templates-wrapper-header">
+            <span>📋 Code Templates</span>
+            <button className="btn secondary" onClick={() => setShowTemplates(false)}>✕ Close</button>
+          </div>
+          <CodeTemplates
+            currentLanguage={language}
+            onSelect={(templateCode, templateLang) => {
+              setCode(templateCode)
+              setLanguage(templateLang)
+              setShowTemplates(false)
+            }}
+          />
+        </div>
+      )}
 
       {mlDetection && (
         <div className="ml-detection-bar">
@@ -470,12 +513,29 @@ const newCode = () => {
               <button className="btn secondary" onClick={() => setShowHistory(false)}>✕ Close</button>
             </div>
           </div>
-          {history.length === 0 ? (
-            <div className="history-empty">No history yet. Analyze some code first!</div>
+
+          {/* Search Box */}
+          <div className="history-search">
+            <input
+              type="text"
+              placeholder="🔍 Search history by language, code or time..."
+              value={historySearch}
+              onChange={e => setHistorySearch(e.target.value)}
+              className="history-search-input"
+            />
+            {historySearch && (
+              <button className="history-search-clear" onClick={() => setHistorySearch('')}>✕</button>
+            )}
+          </div>
+
+          {filteredHistory.length === 0 ? (
+            <div className="history-empty">
+              {historySearch ? `No results for "${historySearch}"` : 'No history yet. Analyze some code first!'}
+            </div>
           ) : (
             <div className="history-list">
-              {history.map((item) => (
-                <div className="history-item" key={item.id} onClick={() => loadFromHistory(item)} style={{cursor:'pointer'}}>
+              {filteredHistory.map((item) => (
+                <div className="history-item" key={item.id} onClick={() => loadFromHistory(item)} style={{ cursor: 'pointer' }}>
                   <div className="history-item-header">
                     <span className="history-lang">{item.language}</span>
                     <span className="history-time">{item.timestamp}</span>
@@ -492,9 +552,7 @@ const newCode = () => {
                       🗑
                     </button>
                   </div>
-                  <div className="history-preview">
-                    {item.preview}
-                  </div>
+                  <div className="history-preview">{item.preview}</div>
                 </div>
               ))}
             </div>
@@ -519,6 +577,7 @@ const newCode = () => {
             }}
             language={language}
             darkMode={darkMode}
+            fontSize={fontSize}
           />
         </div>
 
@@ -567,11 +626,30 @@ const newCode = () => {
               ⚡ Output
             </button>
             <button
-             className={`tab ${activeTab === 'diff' ? 'active' : ''}`}
-             onClick={() => setActiveTab('diff')}
+              className={`tab ${activeTab === 'diff' ? 'active' : ''}`}
+              onClick={() => setActiveTab('diff')}
             >
-          🔀 Diff
-           </button>
+              🔀 Diff
+            </button>
+
+            <button
+              className={`tab ${activeTab === 'fix' ? 'active' : ''}`}
+              onClick={() => setActiveTab('fix')}
+            >
+              🔧 Fix
+            </button>
+            <button
+              className={`tab ${activeTab === 'explain' ? 'active' : ''}`}
+              onClick={() => setActiveTab('explain')}
+            >
+              💬 Explain
+            </button>
+            <button
+              className={`tab ${activeTab === 'algo' ? 'active' : ''}`}
+              onClick={() => setActiveTab('algo')}
+            >
+              🌳 Algo
+            </button>
           </div>
 
           <div className="output-area">
@@ -607,6 +685,9 @@ const newCode = () => {
                   <Executor code={code} language={language} />
                 )}
                 {activeTab === 'diff' && <CodeDiff />}
+                {activeTab === 'fix' && <CodeFixer code={code} language={language} />}
+                {activeTab === 'explain' && <CodeExplainer code={code} language={language} />}
+                {activeTab === 'algo' && <AlgoVisualizer code={code} language={language} />}
               </>
             )}
 

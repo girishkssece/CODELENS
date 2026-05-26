@@ -28,7 +28,7 @@ function fibonacci(n) {
 console.log(fibonacci(6));`
 }
 
-function CodeEditor({ code, setCode, language }) {
+function CodeEditor({ code, setCode, language, fontSize = 13 }) {
   const textareaRef = useRef(null)
 
   const handleKeyDown = (e) => {
@@ -60,6 +60,7 @@ function CodeEditor({ code, setCode, language }) {
         onKeyDown={handleKeyDown}
         placeholder={PLACEHOLDERS[language] || PLACEHOLDERS.auto}
         spellCheck={false}
+        style={{ fontSize: `${fontSize}px` }}
       />
       <style>{`
         .code-editor-wrapper {
@@ -67,7 +68,7 @@ function CodeEditor({ code, setCode, language }) {
           flex: 1;
           overflow: auto;
           font-family: 'Courier New', monospace;
-          font-size: 13px;
+          font-size: ${fontSize}px;
           line-height: 1.7;
         }
         .line-numbers {
@@ -82,23 +83,23 @@ function CodeEditor({ code, setCode, language }) {
           border-right: 1px solid #2d3154;
         }
         .line-numbers span {
-          font-size: 12px;
-          line-height: 1.7;
-        }
+        font-size: ${fontSize - 1}px;
+        line-height: 1.7;
+    }
         .code-textarea {
-          flex: 1;
-          resize: none;
-          border: none;
-          outline: none;
-          padding: 14px;
-          font-family: 'Courier New', monospace;
-          font-size: 13px;
-          line-height: 1.7;
-          background: #0f1117;
-          color: #e2e8f0;
-          min-height: 460px;
-          tab-size: 2;
-        }
+        flex: 1;
+        resize: none;
+        border: none;
+        outline: none;
+        padding: 14px;
+        font-family: 'Courier New', monospace;
+        font-size: ${fontSize}px;
+        line-height: 1.7;
+        background: #0f1117;
+        color: #e2e8f0;
+        min-height: 460px;
+        tab-size: 2;
+     }
         .code-textarea::placeholder {
           color: #2d3154;
         }
