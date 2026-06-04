@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import CodeEditor from './components/CodeEditor'
 import Visualization from './components/Visualization'
 import ReviewPanel from './components/ReviewPanel'
@@ -13,6 +13,7 @@ import CodeFixer from './components/CodeFixer'
 import CodeTemplates from './components/CodeTemplates'
 import CodeExplainer from './components/CodeExplainer'
 import AlgoVisualizer from './components/AlgoVisualizer'
+import Login from './components/Login'
 
 function App() {
   const [code, setCode] = useState('')
@@ -25,18 +26,38 @@ function App() {
   const [runOutput, setRunOutput] = useState(null)
   const [runLoading, setRunLoading] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
+  const [historySort, setHistorySort] = useState('date') // date or language
+  const [pinnedHistory, setPinnedHistory] = useState([])
   const [fontSize, setFontSize] = useState(13)
-  const [history, setHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem('codelens-history')
-      return saved ? JSON.parse(saved) : []
-    } catch {
-      return []
-    }
-  })
+  const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [mlDetection, setMlDetection] = useState(null)
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('codelens_user')
+      return saved ? JSON.parse(saved) : null
+    } catch { return null }
+  })
+  const [token, setToken] = useState(() => localStorage.getItem('codelens_token') || null)
+
+  const authHeaders = {
+    headers: { Authorization: `Bearer ${token}` }
+  }
+
+  // Load history from server on login
+  useEffect(() => {
+    if (token) loadHistory()
+  }, [token])
+
+  const loadHistory = async () => {
+    try {
+      const response = await axios.get('http://localhost:5000/auth/history', authHeaders)
+      setHistory(response.data)
+    } catch (err) {
+      console.error('Failed to load history:', err)
+    }
+  }
 
   const analyzeCode = async () => {
     if (!code.trim()) {
@@ -55,18 +76,18 @@ function App() {
       setResult(response.data)
       setActiveTab('visual')
 
-      // Save to history
-      const historyItem = {
-        id: Date.now(),
-        code: code,
-        language: language === 'auto' ? response.data.visual?.language || 'Unknown' : language,
-        timestamp: new Date().toLocaleString(),
-        result: response.data,
-        preview: code.slice(0, 60) + (code.length > 60 ? '...' : '')
+      // Save to server
+      try {
+        const historyResponse = await axios.post('http://localhost:5000/auth/history', {
+          code,
+          language: language === 'auto' ? response.data.visual?.language || 'Unknown' : language,
+          preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
+          result: response.data
+        }, authHeaders)
+        setHistory(prev => [historyResponse.data, ...prev.slice(0, 9)])
+      } catch (err) {
+        console.error('Failed to save history:', err)
       }
-      const newHistory = [historyItem, ...history.slice(0, 9)]
-      setHistory(newHistory)
-      localStorage.setItem('codelens-history', JSON.stringify(newHistory))
 
     } catch (err) {
       setError(err.response?.data?.error || 'Something went wrong. Is the Flask server running?')
@@ -84,19 +105,19 @@ function App() {
     setLanguage('auto')  // reset dropdown
   }
 
-  const newCode = () => {
+  const newCode = async () => {
     if (code.trim() && result) {
-      const historyItem = {
-        id: Date.now(),
-        code: code,
-        language: language,
-        timestamp: new Date().toLocaleString(),
-        result: result,
-        preview: code.slice(0, 60) + (code.length > 60 ? '...' : '')
+      try {
+        const response = await axios.post('http://localhost:5000/auth/history', {
+          code,
+          language,
+          preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
+          result
+        }, authHeaders)
+        setHistory(prev => [response.data, ...prev.slice(0, 9)])
+      } catch (err) {
+        console.error('Failed to save history:', err)
       }
-      const newHistory = [historyItem, ...history.slice(0, 9)]
-      setHistory(newHistory)
-      localStorage.setItem('codelens-history', JSON.stringify(newHistory))
     }
     setCode('')
     setResult(null)
@@ -158,10 +179,23 @@ function App() {
     setShowHistory(false)
   }
 
-  const clearHistory = () => {
+  const clearHistory = async () => {
+  try {
+    await axios.delete('http://localhost:5000/auth/history/clear', authHeaders)
     setHistory([])
-    localStorage.removeItem('codelens-history')
+  } catch (err) {
+    console.error('Failed to clear history:', err)
   }
+}
+
+  const pinHistory = async (id) => {
+  try {
+    const response = await axios.put(`http://localhost:5000/auth/history/${id}/pin`, {}, authHeaders)
+    setHistory(prev => prev.map(h => h.id === id ? response.data : h))
+  } catch (err) {
+    console.error('Failed to pin history:', err)
+  }
+}
 
   const exportPDF = async () => {
     if (!result) {
@@ -367,11 +401,39 @@ function App() {
     doc.save(`codelens-report-${Date.now()}.pdf`)
   }
 
-  const filteredHistory = history.filter(item =>
-    item.preview.toLowerCase().includes(historySearch.toLowerCase()) ||
-    item.language.toLowerCase().includes(historySearch.toLowerCase()) ||
-    item.timestamp.toLowerCase().includes(historySearch.toLowerCase())
-  )
+  const filteredHistory = history
+    .filter(item =>
+      item.preview.toLowerCase().includes(historySearch.toLowerCase()) ||
+      item.language.toLowerCase().includes(historySearch.toLowerCase()) ||
+      item.timestamp.toLowerCase().includes(historySearch.toLowerCase())
+    )
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      if (historySort === 'language') return a.language.localeCompare(b.language)
+      return b.id - a.id // date — newest first
+    })
+
+  const handleLogin = (userData, userToken) => {
+    setUser(userData)
+    setToken(userToken)
+    localStorage.setItem('codelens_token', userToken)
+    localStorage.setItem('codelens_user', JSON.stringify(userData))
+  }
+
+  const handleLogout = () => {
+    setUser(null)
+    setToken(null)
+    localStorage.removeItem('codelens_token')
+    localStorage.removeItem('codelens_user')
+    setCode('')
+    setResult(null)
+    setHistory([])
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />
+  }
 
   return (
     <div className={`app-container ${darkMode ? 'dark' : 'light'}`}>
@@ -388,6 +450,15 @@ function App() {
         </div>
         <div className="header-right">
           <span className="badge">Powered by LLaMA 3</span>
+          <div className="user-info">
+            <div className="user-avatar">
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+            <span>{user.name}</span>
+          </div>
+          <button className="logout-btn" onClick={handleLogout}>
+            🚪 Logout
+          </button>
           <button className="theme-toggle" onClick={() => setDarkMode(!darkMode)}>
             {darkMode ? '☀️ Light' : '🌙 Dark'}
           </button>
@@ -507,25 +578,41 @@ function App() {
       {showHistory && (
         <div className="history-panel">
           <div className="history-header">
-            <span>📜 Analysis History</span>
+            <span>📜 Analysis History ({history.length})</span>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button className="btn secondary" onClick={clearHistory}>🗑 Clear</button>
               <button className="btn secondary" onClick={() => setShowHistory(false)}>✕ Close</button>
             </div>
           </div>
 
-          {/* Search Box */}
-          <div className="history-search">
-            <input
-              type="text"
-              placeholder="🔍 Search history by language, code or time..."
-              value={historySearch}
-              onChange={e => setHistorySearch(e.target.value)}
-              className="history-search-input"
-            />
-            {historySearch && (
-              <button className="history-search-clear" onClick={() => setHistorySearch('')}>✕</button>
-            )}
+          {/* Search & Sort */}
+          <div className="history-toolbar">
+            <div className="history-search">
+              <input
+                type="text"
+                placeholder="🔍 Search by language, code or time..."
+                value={historySearch}
+                onChange={e => setHistorySearch(e.target.value)}
+                className="history-search-input"
+              />
+              {historySearch && (
+                <button className="history-search-clear" onClick={() => setHistorySearch('')}>✕</button>
+              )}
+            </div>
+            <div className="history-sort">
+              <button
+                className={`sort-btn ${historySort === 'date' ? 'active' : ''}`}
+                onClick={() => setHistorySort('date')}
+              >
+                📅 Date
+              </button>
+              <button
+                className={`sort-btn ${historySort === 'language' ? 'active' : ''}`}
+                onClick={() => setHistorySort('language')}
+              >
+                💻 Language
+              </button>
+            </div>
           </div>
 
           {filteredHistory.length === 0 ? (
@@ -535,24 +622,78 @@ function App() {
           ) : (
             <div className="history-list">
               {filteredHistory.map((item) => (
-                <div className="history-item" key={item.id} onClick={() => loadFromHistory(item)} style={{ cursor: 'pointer' }}>
+                <div
+                  className={`history-item ${item.pinned ? 'pinned' : ''}`}
+                  key={item.id}
+                  onClick={() => loadFromHistory(item)}
+                  style={{ cursor: 'pointer' }}
+                >
                   <div className="history-item-header">
+                    {/* Language Icon */}
+                    <span className="history-lang-icon">
+                      {item.language === 'Python' ? '🐍' :
+                       item.language === 'JavaScript' ? '🟨' :
+                       item.language === 'Java' ? '☕' :
+                       item.language === 'C++' ? '⚙️' :
+                       item.language === 'C' ? '🔵' :
+                       item.language === 'Go' ? '🐹' :
+                       item.language === 'Rust' ? '🦀' :
+                       item.language === 'Ruby' ? '💎' :
+                       item.language === 'PHP' ? '🐘' : '💻'}
+                    </span>
                     <span className="history-lang">{item.language}</span>
+                    {item.pinned && <span className="history-pinned-badge">📌 Pinned</span>}
                     <span className="history-time">{item.timestamp}</span>
-                    <button
-                      className="history-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        const newHistory = history.filter(h => h.id !== item.id)
-                        setHistory(newHistory)
-                        localStorage.setItem('codelens-history', JSON.stringify(newHistory))
-                      }}
-                      title="Delete this entry"
-                    >
-                      🗑
-                    </button>
+                    <div className="history-actions">
+                      <button
+                        className="history-pin-btn"
+                        onClick={(e) => { e.stopPropagation(); pinHistory(item.id) }}
+                        title={item.pinned ? 'Unpin' : 'Pin'}
+                      >
+                        {item.pinned ? '📌' : '📍'}
+                      </button>
+                      <button
+                        className="history-delete-btn"
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          try {
+                            await axios.delete(`http://localhost:5000/auth/history/${item.id}`, authHeaders)
+                            setHistory(prev => prev.filter(h => h.id !== item.id))
+                          } catch (err) {
+                            console.error('Failed to delete history:', err)
+                          }
+                        }}
+                        title="Delete"
+                      >
+                        🗑
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Preview */}
                   <div className="history-preview">{item.preview}</div>
+
+                  {/* Result Preview */}
+                  {item.result?.visual && (
+                    <div className="history-result-preview">
+                      <span className="hrp-badge">
+                        ⚡ {item.result.visual.complexity || 'N/A'}
+                      </span>
+                      <span className="hrp-badge">
+                        📄 {item.result.visual.lines || 0} lines
+                      </span>
+                      {item.result.review?.bugs?.length > 0 && (
+                        <span className="hrp-badge bug">
+                          🐛 {item.result.review.bugs.length} bug{item.result.review.bugs.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {item.result.review?.strengths?.length > 0 && (
+                        <span className="hrp-badge good">
+                          👍 {item.result.review.strengths.length} strength{item.result.review.strengths.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

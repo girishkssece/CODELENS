@@ -9,6 +9,7 @@ function Executor({ code, language }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [speed, setSpeed] = useState(500)
   const [hasExecuted, setHasExecuted] = useState(false)
+  const [result, setResult] = useState(null)
   const intervalRef = useRef(null)
   const codeRef = useRef(null)
 
@@ -32,6 +33,7 @@ function Executor({ code, language }) {
       if (response.data.error && response.data.steps.length === 0) {
         setError(response.data.error)
       } else {
+        setResult(response.data)
         setSteps(response.data.steps || [])
         setHasExecuted(true)
         setCurrentStep(0)
@@ -186,6 +188,12 @@ function Executor({ code, language }) {
             <span className="step-counter">
               Step {currentStep + 1} / {steps.length}
             </span>
+
+            {result && (
+              <span className={`exec-mode-badge ${result.mode === 'real' ? 'real' : 'ai'}`}>
+                {result.mode === 'real' ? '⚡ Real Execution' : '🤖 AI Simulated'}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -202,6 +210,17 @@ function Executor({ code, language }) {
 
       {error && (
         <div className="exec-error">⚠️ {error}</div>
+      )}
+
+      {loading && (
+        <div className="exec-placeholder">
+          <div style={{ fontSize: '48px', opacity: 0.6 }}>⏳</div>
+          <p>
+            {language === 'Python'
+              ? 'Running Python step-by-step...'
+              : `Simulating ${language} execution with AI...`}
+          </p>
+        </div>
       )}
 
       {!hasExecuted && !loading && !error && (
@@ -653,6 +672,23 @@ function Executor({ code, language }) {
           color: #4ade80;
           margin: 0;
           white-space: pre-wrap;
+        }
+        .exec-mode-badge {
+          font-size: 10px;
+          font-weight: 600;
+          padding: 3px 8px;
+          border-radius: 99px;
+          font-family: sans-serif;
+        }
+        .exec-mode-badge.real {
+          background: #1a3a1a;
+          border: 1px solid #4ade80;
+          color: #4ade80;
+        }
+        .exec-mode-badge.ai {
+          background: #2a1a4a;
+          border: 1px solid #c084fc;
+          color: #c084fc;
         }
         @media (max-width: 768px) {
           .executor-workspace { grid-template-columns: 1fr; }

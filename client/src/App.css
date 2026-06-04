@@ -788,3 +788,175 @@
 .tabs::-webkit-scrollbar {
   display: none;
 }
+
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #2d3154;
+  flex-wrap: wrap;
+}
+
+.history-search {
+  flex: 1;
+  position: relative;
+  min-width: 200px;
+}
+
+.history-sort {
+  display: flex;
+  gap: 4px;
+  background: #0f1117;
+  border: 1px solid #2d3154;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.sort-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: #64748b;
+  transition: all 0.15s;
+  font-family: sans-serif;
+}
+
+.sort-btn.active {
+  background: #1a1d2e;
+  color: #e2e8f0;
+  border: 1px solid #2d3154;
+}
+
+.history-item.pinned {
+  border-left: 3px solid #fbbf24;
+  background: #1a1a0a;
+}
+
+.history-lang-icon {
+  font-size: 16px;
+}
+
+.history-pinned-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: #3a3a1a;
+  border: 1px solid #fbbf24;
+  border-radius: 99px;
+  color: #fbbf24;
+  font-family: sans-serif;
+}
+
+.history-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.history-pin-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.history-pin-btn:hover {
+  opacity: 1;
+  background: #2d3154;
+}
+
+.history-result-preview {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.hrp-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: #1a1d2e;
+  border: 1px solid #2d3154;
+  border-radius: 99px;
+  color: #64748b;
+  font-family: sans-serif;
+}
+
+.hrp-badge.bug {
+  background: #2d1a1a;
+  border-color: #f87171;
+  color: #f87171;
+}
+
+.hrp-badge.good {
+  background: #1a2d1a;
+  border-color: #4ade80;
+  color: #4ade80;
+}
+
+.light .history-item.pinned {
+  background: #fffbeb;
+  border-left-color: #fbbf24;
+}
+
+.light .sort-btn.active {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7aa2f7, #c084fc);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: sans-serif;
+}
+
+.user-name {
+  font-size: 13px;
+  color: #e2e8f0;
+  font-family: sans-serif;
+  font-weight: 500;
+}
+
+.logout-btn {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid #2d3154;
+  background: transparent;
+  color: #f87171;
+  transition: all 0.2s;
+  font-family: sans-serif;
+}
+
+.logout-btn:hover {
+  background: #2d1a1a;
+  border-color: #f87171;
+}
+
+.light .user-name { color: #0f172a; }
+.light .logout-btn { border-color: #e2e8f0; }

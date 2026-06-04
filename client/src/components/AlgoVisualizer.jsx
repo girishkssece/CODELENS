@@ -34,20 +34,28 @@ function AlgoVisualizer({ code, language }) {
   const timelineRef = useRef(null)
   const codeRef = useRef(null)
 
-  const visualize = async () => {
+  const visualize = async (retryCount = 0) => {
     if (!code.trim()) { setError('Please paste some code first!'); return }
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    setCurrentStep(0)
-    setIsPlaying(false)
+    if (retryCount === 0) {
+      setLoading(true)
+      setError(null)
+      setResult(null)
+      setCurrentStep(0)
+      setIsPlaying(false)
+    }
     try {
       const response = await axios.post('http://localhost:5000/visualize-algo', { code, language })
       setResult(response.data)
+      if (retryCount > 0) setError(null)
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to visualize')
+      if (err.response?.status === 429 && retryCount < 2) {
+        // Rate limit: retry up to 2 times with 3000ms delay
+        setTimeout(() => visualize(retryCount + 1), 3000)
+        return
+      }
+      setError(err.response?.status === 429 ? 'Rate limit hit. Please wait 1 minute and try again!' : err.response?.data?.error || 'Failed to visualize. Click Visualize again!')
     } finally {
-      setLoading(false)
+      if (retryCount === 0 || retryCount >= 2) setLoading(false)
     }
   }
 
