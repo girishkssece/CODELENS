@@ -67,7 +67,7 @@ def me():
 @jwt_required()
 def get_history():
     user_id = get_jwt_identity()
-    history = History.query.filter_by(user_id=user_id).order_by(History.created_at.desc()).limit(20).all()
+    history = History.query.filter_by(user_id=user_id).order_by(History.created_at.desc()).all()
     return jsonify([h.to_dict() for h in history])
 
 @auth_bp.route('/history', methods=['POST'])

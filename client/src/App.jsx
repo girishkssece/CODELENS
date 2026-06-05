@@ -84,7 +84,7 @@ function App() {
           preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
           result: response.data
         }, authHeaders)
-        setHistory(prev => [historyResponse.data, ...prev.slice(0, 9)])
+        setHistory(prev => [response.data, ...prev])
       } catch (err) {
         console.error('Failed to save history:', err)
       }
@@ -114,7 +114,7 @@ function App() {
           preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
           result
         }, authHeaders)
-        setHistory(prev => [response.data, ...prev.slice(0, 9)])
+        setHistory(prev => [response.data, ...prev])
       } catch (err) {
         console.error('Failed to save history:', err)
       }
