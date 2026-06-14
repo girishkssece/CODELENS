@@ -190,13 +190,22 @@ def run_code():
                 f.write(code)
                 temp_path = f.name
 
-            # Extract class name from code
-            class_match = re.search(r'(?:public\s+)?class\s+(\w+)', code)
-            class_name = class_match.group(1) if class_match else 'Main'
+            # Find any public class name
+            class_match = re.search(r'public\s+class\s+(\w+)', code)
+            if not class_match:
+                # If no public class, wrap in Main class
+                wrapped_code = f"public class Main {{\n    public static void main(String[] args) {{\n        // Auto-wrapped\n    }}\n}}\n" + code
+                class_name = 'Main'
+            else:
+                class_name = class_match.group(1)
+                wrapped_code = code
 
-            # Rename file to match class name
             proper_path = os.path.join(tempfile.gettempdir(), f"{class_name}.java")
-            os.rename(temp_path, proper_path)
+            with open(proper_path, 'w') as f:
+                f.write(wrapped_code)
+
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
             compile_result = subprocess.run(["javac", proper_path], capture_output=True, text=True, timeout=15)
             if compile_result.returncode != 0:
@@ -332,21 +341,39 @@ def execute():
             with tempfile.NamedTemporaryFile(mode='w', suffix='.java', delete=False, dir=tempfile.gettempdir()) as f:
                 f.write(code)
                 temp_path = f.name
-            class_match = re.search(r'(?:public\s+)?class\s+(\w+)', code)
-            class_name = class_match.group(1) if class_match else 'Main'
+
+    # Find public class name
+            class_match = re.search(r'public\s+class\s+(\w+)', code)
+            if not class_match:
+                # No public class found — wrap in Main
+                class_name = 'Main'
+                wrapped_code = code + f"\npublic class Main {{ public static void main(String[] args) {{}} }}"
+            else:
+                class_name = class_match.group(1)
+                wrapped_code = code
+
             proper_path = os.path.join(tempfile.gettempdir(), f"{class_name}.java")
-            os.rename(temp_path, proper_path)
+            with open(proper_path, 'w') as f:
+                f.write(wrapped_code)
+
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
             compile_result = subprocess.run(["javac", proper_path], capture_output=True, text=True, timeout=15)
-            if compile_result.returncode == 0:
-                run_result = subprocess.run(["java", "-cp", tempfile.gettempdir(), class_name], capture_output=True, text=True, timeout=15)
+            if compile_result.returncode != 0:
+                actual_error = compile_result.stderr
+                os.unlink(proper_path)
+            else:
+                run_result = subprocess.run(
+                   ["java", "-cp", tempfile.gettempdir(), class_name],
+                    capture_output=True, text=True, timeout=15
+                )
                 actual_output = run_result.stdout
                 actual_error = run_result.stderr
-            else:
-                actual_error = compile_result.stderr
-            os.unlink(proper_path)
-            class_file = os.path.join(tempfile.gettempdir(), f"{class_name}.class")
-            if os.path.exists(class_file):
-                os.unlink(class_file)
+                os.unlink(proper_path)
+                class_file = os.path.join(tempfile.gettempdir(), f"{class_name}.class")
+                if os.path.exists(class_file):
+                    os.unlink(class_file)
 
         elif language == "Go":
             with tempfile.NamedTemporaryFile(mode='w', suffix='.go', delete=False) as f:

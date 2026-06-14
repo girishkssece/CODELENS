@@ -64,45 +64,45 @@ function CodeEditor({ code, setCode, language, fontSize = 13 }) {
       />
       <style>{`
         .code-editor-wrapper {
-          display: flex;
-          flex: 1;
-          overflow: auto;
-          font-family: 'Courier New', monospace;
-          font-size: ${fontSize}px;
-          line-height: 1.7;
-        }
-        .line-numbers {
-          display: flex;
-          flex-direction: column;
-          padding: 14px 8px;
-          background: #0f1117;
-          color: #3d4268;
-          text-align: right;
-          user-select: none;
-          min-width: 40px;
-          border-right: 1px solid #2d3154;
-        }
-        .line-numbers span {
-        font-size: ${fontSize - 1}px;
-        line-height: 1.7;
-    }
-        .code-textarea {
-        flex: 1;
-        resize: none;
-        border: none;
-        outline: none;
-        padding: 14px;
-        font-family: 'Courier New', monospace;
-        font-size: ${fontSize}px;
-        line-height: 1.7;
-        background: #0f1117;
-        color: #e2e8f0;
-        min-height: 460px;
-        tab-size: 2;
-     }
-        .code-textarea::placeholder {
-          color: #2d3154;
-        }
+  display: flex;
+  flex: 1;
+  overflow: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: ${fontSize}px;
+  line-height: 1.7;
+}
+.line-numbers {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  text-align: right;
+  user-select: none;
+  min-width: 44px;
+  border-right: 1px solid var(--border);
+}
+.line-numbers span {
+  font-size: ${fontSize - 1}px;
+  line-height: 1.7;
+}
+.code-textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: ${fontSize}px;
+  line-height: 1.7;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 460px;
+  tab-size: 2;
+}
+.code-textarea::placeholder {
+  color: var(--text-tertiary);
+}
       `}</style>
     </div>
   )

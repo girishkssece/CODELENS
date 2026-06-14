@@ -41,6 +41,14 @@ function App() {
   })
   const [token, setToken] = useState(() => localStorage.getItem('codelens_token') || null)
 
+  // Safety check for result rendering
+  const safeResult = result ? {
+    visual: result.visual || { language: 'Unknown', complexity: 'N/A', lines: 0, steps: [] },
+    review: result.review || { bugs: [], improvements: [], strengths: [], info: [] },
+    variables: result.variables || [],
+    flow: result.flow || null
+  } : null
+
   const authHeaders = {
     headers: { Authorization: `Bearer ${token}` }
   }
@@ -60,41 +68,58 @@ function App() {
   }
 
   const analyzeCode = async () => {
-    if (!code.trim()) {
-      alert('Please paste some code first!')
+  if (!code.trim()) {
+    alert('Please paste some code first!')
+    return
+  }
+  setLoading(true)
+  setError(null)
+  setResult(null)
+
+  try {
+    const response = await axios.post('http://localhost:5000/analyze', {
+      code,
+      language
+    })
+
+    // Validate response before setting
+    const data = response.data
+    if (!data || typeof data !== 'object') {
+      setError('Invalid response from server. Please try again!')
       return
     }
-    setLoading(true)
-    setError(null)
-    setResult(null)
 
-    try {
-      const response = await axios.post('http://localhost:5000/analyze', {
-        code,
-        language
-      })
-      setResult(response.data)
-      setActiveTab('visual')
-
-      // Save to server
-      try {
-        const historyResponse = await axios.post('http://localhost:5000/auth/history', {
-          code,
-          language: language === 'auto' ? response.data.visual?.language || 'Unknown' : language,
-          preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
-          result: response.data
-        }, authHeaders)
-        setHistory(prev => [response.data, ...prev])
-      } catch (err) {
-        console.error('Failed to save history:', err)
-      }
-
-    } catch (err) {
-      setError(err.response?.data?.error || 'Something went wrong. Is the Flask server running?')
-    } finally {
-      setLoading(false)
+    // Ensure all required fields exist
+    const safeResult = {
+      visual: data.visual || { language: 'Unknown', complexity: 'N/A', lines: 0, steps: [] },
+      review: data.review || { bugs: [], improvements: [], strengths: [], info: [] },
+      variables: data.variables || [],
+      flow: data.flow || null
     }
+
+    setResult(safeResult)
+    setActiveTab('visual')
+
+    // Save to server
+    try {
+      const historyResponse = await axios.post('http://localhost:5000/auth/history', {
+        code,
+        language: language === 'auto' ? safeResult.visual?.language || 'Unknown' : language,
+        preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
+        result: safeResult
+      }, authHeaders)
+      setHistory(prev => [historyResponse.data, ...prev])
+    } catch (histErr) {
+      console.error('Failed to save history:', histErr)
+    }
+
+  } catch (err) {
+    console.error('Analysis error:', err)
+    setError(err.response?.data?.error || 'Analysis failed. Please try again!')
+  } finally {
+    setLoading(false)
   }
+}
 
   const clearAll = () => {
     setCode('')
@@ -223,17 +248,17 @@ function App() {
     y = 55
 
     // Language & Complexity
-    if (result.visual) {
+    if (safeResult.visual) {
       doc.setFillColor(240, 245, 255)
       doc.rect(15, y - 6, pageWidth - 30, 20, 'F')
       doc.setTextColor(29, 158, 117)
       doc.setFontSize(12)
       doc.setFont('helvetica', 'bold')
-      doc.text(`Language: ${result.visual.language || 'Unknown'}`, 20, y + 4)
+      doc.text(`Language: ${safeResult.visual.language || 'Unknown'}`, 20, y + 4)
       doc.setTextColor(55, 138, 221)
-      doc.text(`Complexity: ${result.visual.complexity || 'N/A'}`, 100, y + 4)
+      doc.text(`Complexity: ${safeResult.visual.complexity || 'N/A'}`, 100, y + 4)
       doc.setTextColor(216, 90, 48)
-      doc.text(`Lines: ${result.visual.lines || 'N/A'}`, 170, y + 4)
+      doc.text(`Lines: ${safeResult.visual.lines || 'N/A'}`, 170, y + 4)
       y += 25
     }
 
@@ -261,7 +286,7 @@ function App() {
     y += Math.min(codeHeight, 65)
 
     // Visualization Steps
-    if (result.visual?.steps?.length > 0) {
+    if (safeResult.visual?.steps?.length > 0) {
       if (y > 220) { doc.addPage(); y = 20 }
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(13)
@@ -269,7 +294,7 @@ function App() {
       doc.text('Execution Steps', 20, y)
       y += 10
 
-      result.visual.steps.forEach((step, index) => {
+      safeResult.visual.steps.forEach((step, index) => {
         if (y > 260) { doc.addPage(); y = 20 }
         doc.setFillColor(29, 158, 117)
         doc.circle(22, y - 1, 4, 'F')
@@ -295,7 +320,7 @@ function App() {
     }
 
     // Review Section
-    if (result.review) {
+    if (safeResult.review) {
       if (y > 220) { doc.addPage(); y = 20 }
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(13)
@@ -311,7 +336,7 @@ function App() {
       ]
 
       reviewSections.forEach(section => {
-        const items = result.review[section.key]
+        const items = safeResult.review[section.key]
         if (!items || items.length === 0) return
         if (y > 250) { doc.addPage(); y = 20 }
 
@@ -343,7 +368,7 @@ function App() {
     }
 
     // Variables Section
-    if (result.variables?.length > 0) {
+    if (safeResult.variables?.length > 0) {
       if (y > 220) { doc.addPage(); y = 20 }
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(13)
@@ -362,7 +387,7 @@ function App() {
       doc.text('Role', 145, y + 1)
       y += 10
 
-      result.variables.forEach((v, i) => {
+      safeResult.variables.forEach((v, i) => {
         if (y > 270) { doc.addPage(); y = 20 }
         if (i % 2 === 0) {
           doc.setFillColor(245, 247, 255)
@@ -475,19 +500,13 @@ function App() {
           <option value="auto">Auto-detect language</option>
           <option value="Python">Python</option>
           <option value="JavaScript">JavaScript</option>
-          <option value="TypeScript">TypeScript</option>
           <option value="Java">Java</option>
           <option value="C">C</option>
           <option value="C++">C++</option>
-          <option value="C#">C#</option>
           <option value="Go">Go</option>
           <option value="Rust">Rust</option>
           <option value="Ruby">Ruby</option>
           <option value="PHP">PHP</option>
-          <option value="Swift">Swift</option>
-          <option value="Kotlin">Kotlin</option>
-          <option value="SQL">SQL</option>
-          <option value="Bash">Bash/Shell</option>
         </select>
 
         <button
@@ -815,13 +834,13 @@ function App() {
               </div>
             )}
 
-            {!loading && result && activeTab !== 'output' && (
+            {!loading && safeResult && activeTab !== 'output' && (
               <>
-                {activeTab === 'visual' && <Visualization data={result.visual} />}
-                {activeTab === 'review' && <ReviewPanel data={result.review} />}
-                {activeTab === 'vars' && <VariablesPanel data={result.variables} />}
-                {activeTab === 'complexity' && <ComplexityGraph data={result.visual} />}
-                {activeTab === 'flow' && <FlowDiagram data={result.flow} />}
+                {activeTab === 'visual' && <Visualization data={safeResult.visual} />}
+                {activeTab === 'review' && <ReviewPanel data={safeResult.review} />}
+                {activeTab === 'vars' && <VariablesPanel data={safeResult.variables} />}
+                {activeTab === 'complexity' && <ComplexityGraph data={safeResult.visual} />}
+                {activeTab === 'flow' && <FlowDiagram data={safeResult.flow} />}
                 {activeTab === 'executor' && (
                   <Executor code={code} language={language} />
                 )}
