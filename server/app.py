@@ -14,6 +14,12 @@ from flask_bcrypt import Bcrypt
 from models import db, User, History
 from auth import auth_bp, bcrypt
 import secrets
+from algo_engine import build_algo_visualization
+from code_tracer import (
+    trace_javascript, trace_cpp, trace_java,
+    trace_go, trace_rust, trace_ruby, trace_php,
+    build_visualization_from_trace
+)
 
 load_dotenv()
 
@@ -161,36 +167,7 @@ def run_code():
             os.unlink(temp_path)
             return jsonify({"output": result.stdout, "error": result.stderr, "returncode": result.returncode})
 
-        elif language == "JavaScript":
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
-                f.write(code)
-                temp_path = f.name
-            result = subprocess.run(["node", temp_path], capture_output=True, text=True, timeout=10)
-            os.unlink(temp_path)
-            return jsonify({"output": result.stdout, "error": result.stderr, "returncode": result.returncode})
-
-        elif language in ["C", "C++"]:
-            suffix = '.c' if language == "C" else '.cpp'
-            compiler = "gcc" if language == "C" else "g++"
-            with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False) as f:
-                f.write(code)
-                temp_path = f.name
-            exe_path = temp_path.replace(suffix, '.exe')
-            compile_result = subprocess.run([compiler, temp_path, "-o", exe_path], capture_output=True, text=True, timeout=10)
-            if compile_result.returncode != 0:
-                os.unlink(temp_path)
-                return jsonify({"output": "", "error": compile_result.stderr, "returncode": compile_result.returncode})
-            run_result = subprocess.run([exe_path], capture_output=True, text=True, timeout=10)
-            os.unlink(temp_path)
-            os.unlink(exe_path)
-            return jsonify({"output": run_result.stdout, "error": run_result.stderr, "returncode": run_result.returncode})
-
         elif language == "Java":
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.java', delete=False, dir=tempfile.gettempdir()) as f:
-                f.write(code)
-                temp_path = f.name
-
-            # Find any public class name
             class_match = re.search(r'public\s+class\s+(\w+)', code)
             if not class_match:
                 # If no public class, wrap in Main class
@@ -204,8 +181,7 @@ def run_code():
             with open(proper_path, 'w') as f:
                 f.write(wrapped_code)
 
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+
 
             compile_result = subprocess.run(["javac", proper_path], capture_output=True, text=True, timeout=15)
             if compile_result.returncode != 0:
@@ -672,98 +648,167 @@ CODE TO EXPLAIN:
             return jsonify({"error": "Rate limit hit. Please wait 1 minute and try again!"}), 429
         return jsonify({"error": str(e)}), 500
     
+def _detect_language_from_code(code):
+    """Detect programming language from code content using keyword heuristics"""
+    code_stripped = code.strip()
+
+    # Java — must check before C/C++ because of similar syntax
+    if re.search(r'public\s+class\s+\w+', code) or re.search(r'System\.out\.print', code):
+        return "Java"
+    # JavaScript / Node.js
+    if re.search(r'\b(console\.log|function\s+\w+\s*\(|const\s+\w+\s*=|let\s+\w+\s*=|=>|require\(|module\.exports)', code):
+        return "JavaScript"
+    # Go
+    if re.search(r'package\s+main|func\s+main\s*\(|fmt\.(Print|Scan)', code):
+        return "Go"
+    # Rust
+    if re.search(r'fn\s+main\s*\(|println!\s*\(|let\s+mut\s+', code):
+        return "Rust"
+    # Ruby
+    if re.search(r'\bputs\s+|def\s+\w+.*\bend\b|\.each\s+do', code):
+        return "Ruby"
+    # PHP
+    if re.search(r'<\?php|\$\w+\s*=|echo\s+', code):
+        return "PHP"
+    # C++ — check before C
+    if re.search(r'#include\s*<iostream>|cout\s*<<|cin\s*>>|using\s+namespace\s+std|std::', code):
+        return "C++"
+    # C
+    if re.search(r'#include\s*<stdio\.h>|printf\s*\(|scanf\s*\(|int\s+main\s*\(', code):
+        return "C"
+    # Python — default fallback for indentation-based, def/class, print()
+    if re.search(r'def\s+\w+\s*\(|class\s+\w+|print\s*\(|import\s+\w+|from\s+\w+\s+import', code):
+        return "Python"
+
+    return "Python"  # default
+
+
 @app.route("/visualize-algo", methods=["POST"])
 def visualize_algo():
     data = request.get_json()
     code = data.get("code", "")
     language = data.get("language", "auto")
 
-    # Limit code length to avoid token issues
-    if len(code) > 500:
-        code = code[:500]
-
     if not code:
         return jsonify({"error": "No code provided"}), 400
 
-    lang_str = "auto-detect the language and" if language == "auto" else f"treat this as {language} code and"
+    # Resolve "auto" to an actual language
+    if language == "auto":
+        language = _detect_language_from_code(code)
 
-    # Count lines to determine complexity
-    code_lines = len(code.strip().split('\n'))
+    # Python — real execution engine with sys.settrace
+    if language == "Python":
+        try:
+            result = build_algo_visualization(code)
+            if result.get('tree_nodes') and result.get('steps'):
+                return jsonify(result)
+        except Exception as e:
+            print(f"Python engine error: {e}")
 
-    # Use simpler prompt for complex algorithms
-    prompt = f"""Generate a JSON visualization for this algorithm. Return ONLY valid JSON, nothing else.
+    real_output = ""
+    trace = []
+
+    # Language-specific tracers
+    tracer_map = {
+        "JavaScript": trace_javascript,
+        "C": trace_cpp,
+        "C++": trace_cpp,
+        "Java": trace_java,
+        "Go": trace_go,
+        "Rust": trace_rust,
+        "Ruby": trace_ruby,
+        "PHP": trace_php,
+    }
+
+    tracer_fn = tracer_map.get(language)
+    if tracer_fn:
+        try:
+            real_output, trace = tracer_fn(code)
+            result = build_visualization_from_trace(code, language, real_output, trace)
+            if result.get('tree_nodes') and result.get('steps'):
+                return jsonify(result)
+        except Exception as e:
+            print(f"{language} tracer error: {e}")
+
+    # Final fallback — AI-generated visualization
+    prompt = f"""Analyze this {language} algorithm and return ONLY a JSON visualization.
 
 CODE:
-{code[:400]}
+{code[:500]}
 
-Return this exact JSON structure with 6-8 nodes and 6-8 steps maximum:
+ACTUAL OUTPUT FROM RUNNING THE CODE: {real_output[:200] if real_output else 'not available'}
+
+Return this EXACT JSON structure with ACCURATE values from the code.
+Build a proper execution tree with parent-child relationships.
+Each tree_node must have an appropriate depth value for tree layout.
+Give at least 5 steps and 3 tree nodes.
+
 {{
-  "algo_type": "recursion",
-  "title": "Tower of Hanoi",
-  "description": "Move disks from source to target",
-  "time_complexity": "O(2^n)",
-  "space_complexity": "O(n)",
+  "algo_type": "recursion/sorting/searching/tree/graph/linear",
+  "title": "descriptive algorithm name",
+  "description": "what it does",
+  "time_complexity": "O(?)",
+  "space_complexity": "O(?)",
   "tree_nodes": [
-    {{"id": "n1", "value": "hanoi(3)", "label": "hanoi(3,A,C)", "left": "n2", "right": "n3", "parent": null, "depth": 0, "x_offset": 0}},
-    {{"id": "n2", "value": "hanoi(2)", "label": "hanoi(2,A,B)", "left": "n4", "right": "n5", "parent": "n1", "depth": 1, "x_offset": -1}},
-    {{"id": "n3", "value": "hanoi(1)", "label": "hanoi(1,A,C)", "left": null, "right": null, "parent": "n1", "depth": 1, "x_offset": 1}},
-    {{"id": "n4", "value": "hanoi(1)", "label": "hanoi(1,A,C)", "left": null, "right": null, "parent": "n2", "depth": 2, "x_offset": -1}},
-    {{"id": "n5", "value": "hanoi(1)", "label": "hanoi(1,B,C)", "left": null, "right": null, "parent": "n2", "depth": 2, "x_offset": 1}}
+    {{"id":"n1","value":"main","label":"main()","left":"n2","right":"n3","parent":null,"depth":0,"x_offset":0}},
+    {{"id":"n2","value":"step1","label":"step 1","left":null,"right":null,"parent":"n1","depth":1,"x_offset":0}},
+    {{"id":"n3","value":"step2","label":"step 2","left":null,"right":null,"parent":"n1","depth":1,"x_offset":0}}
   ],
   "steps": [
-    {{"id": "s1", "node_id": "n1", "operation": "CALL", "description": "Start hanoi(3)", "code_line": 1, "visited_nodes": [], "output": [], "highlighted_nodes": ["n1"], "edge_from": null, "edge_to": null}},
-    {{"id": "s2", "node_id": "n2", "operation": "CALL", "description": "Move 2 disks A to B", "code_line": 4, "visited_nodes": ["n1"], "output": [], "highlighted_nodes": ["n2"], "edge_from": "n1", "edge_to": "n2"}},
-    {{"id": "s3", "node_id": "n4", "operation": "BASE_CASE", "description": "Move disk 1 A to C", "code_line": 2, "visited_nodes": ["n1","n2"], "output": ["Move 1: A→C"], "highlighted_nodes": ["n4"], "edge_from": "n2", "edge_to": "n4"}},
-    {{"id": "s4", "node_id": "n5", "operation": "RETURN", "description": "Move disk 2 A to B", "code_line": 5, "visited_nodes": ["n1","n2","n4"], "output": ["Move 1: A→C","Move 2: A→B"], "highlighted_nodes": ["n5"], "edge_from": "n2", "edge_to": "n5"}},
-    {{"id": "s5", "node_id": "n3", "operation": "BASE_CASE", "description": "Move disk 3 A to C", "code_line": 2, "visited_nodes": ["n1","n2","n4","n5"], "output": ["Move 1: A→C","Move 2: A→B","Move 3: A→C"], "highlighted_nodes": ["n3"], "edge_from": "n1", "edge_to": "n3"}}
+    {{"id":"s1","node_id":"n1","operation":"CALL","description":"description of what happens","code_line":1,"visited_nodes":[],"output":[],"highlighted_nodes":["n1"],"edge_from":null,"edge_to":"n1"}},
+    {{"id":"s2","node_id":"n2","operation":"VISIT","description":"description","code_line":2,"visited_nodes":["n1"],"output":[],"highlighted_nodes":["n2"],"edge_from":"n1","edge_to":"n2"}}
   ],
-  "final_output": ["7 total moves"],
+  "final_output": ["{real_output.strip()[:100] if real_output else ''}"],
   "total_steps": 5
 }}
 
-Generate the actual visualization for the given code. Keep it simple — max 8 nodes and 8 steps. Return ONLY JSON.
-"""
+IMPORTANT: Use operation types from: CALL, RETURN, VISIT, COMPARE, SWAP, SPLIT, MERGE, BASE_CASE.
+tree_nodes MUST have proper depth values (0 for root, 1 for children, 2 for grandchildren, etc.)
+and parent references to form a valid tree structure."""
 
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            max_tokens=2000,
+            max_tokens=3000,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an algorithm visualization engine. Always respond with valid JSON only. No markdown."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "system", "content": "You are an algorithm visualization engine. Output ONLY valid JSON with exact values from the code. Build proper tree structures with parent-child relationships and correct depth values."},
+                {"role": "user", "content": prompt}
             ]
         )
-        text = response.choices[0].message.content
-        print("AI RESPONSE:", text[:500])  # add this line
-        start = text.find('{')
-        end = text.rfind('}')
-        if start != -1 and end != -1:
-            clean = text[start:end+1]
-        else:
-            clean = text.replace("```json", "").replace("```", "").strip()
-            
-        result = json.loads(clean)
-        return jsonify(result)
-    except json.JSONDecodeError as e:
-        # Try to extract JSON from response
+        text = response.choices[0].message.content.strip()
+        result = None
         try:
-            import re
-            json_match = re.search(r'\{.*\}', text, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-                return jsonify(result)
+            result = json.loads(text)
         except:
             pass
-        return jsonify({"error": "Failed to parse AI response. Try again!"}), 500
+        if not result:
+            try:
+                clean = text.replace("```json","").replace("```","").strip()
+                result = json.loads(clean)
+            except:
+                pass
+        if not result:
+            try:
+                start = text.find('{')
+                end = text.rfind('}') + 1
+                if start != -1 and end > start:
+                    result = json.loads(text[start:end])
+            except:
+                pass
+        if result:
+            # Validate tree_nodes have required fields
+            if 'tree_nodes' in result:
+                for node in result['tree_nodes']:
+                    node.setdefault('depth', 0)
+                    node.setdefault('parent', None)
+                    node.setdefault('left', None)
+                    node.setdefault('right', None)
+                    node.setdefault('x_offset', 0)
+            return jsonify(result)
+        return jsonify({"error": "Failed to visualize. Try again!"}), 500
     except Exception as e:
         if '429' in str(e):
-            return jsonify({"error": "Rate limit hit. Please wait 1 minute and try again!"}), 429
+            return jsonify({"error": "Rate limit hit. Wait 1 minute!"}), 429
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":

@@ -68,58 +68,58 @@ function App() {
   }
 
   const analyzeCode = async () => {
-  if (!code.trim()) {
-    alert('Please paste some code first!')
-    return
-  }
-  setLoading(true)
-  setError(null)
-  setResult(null)
-
-  try {
-    const response = await axios.post('http://localhost:5000/analyze', {
-      code,
-      language
-    })
-
-    // Validate response before setting
-    const data = response.data
-    if (!data || typeof data !== 'object') {
-      setError('Invalid response from server. Please try again!')
+    if (!code.trim()) {
+      alert('Please paste some code first!')
       return
     }
+    setLoading(true)
+    setError(null)
+    setResult(null)
 
-    // Ensure all required fields exist
-    const safeResult = {
-      visual: data.visual || { language: 'Unknown', complexity: 'N/A', lines: 0, steps: [] },
-      review: data.review || { bugs: [], improvements: [], strengths: [], info: [] },
-      variables: data.variables || [],
-      flow: data.flow || null
-    }
-
-    setResult(safeResult)
-    setActiveTab('visual')
-
-    // Save to server
     try {
-      const historyResponse = await axios.post('http://localhost:5000/auth/history', {
+      const response = await axios.post('http://localhost:5000/analyze', {
         code,
-        language: language === 'auto' ? safeResult.visual?.language || 'Unknown' : language,
-        preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
-        result: safeResult
-      }, authHeaders)
-      setHistory(prev => [historyResponse.data, ...prev])
-    } catch (histErr) {
-      console.error('Failed to save history:', histErr)
-    }
+        language
+      })
 
-  } catch (err) {
-    console.error('Analysis error:', err)
-    setError(err.response?.data?.error || 'Analysis failed. Please try again!')
-  } finally {
-    setLoading(false)
+      // Validate response before setting
+      const data = response.data
+      if (!data || typeof data !== 'object') {
+        setError('Invalid response from server. Please try again!')
+        return
+      }
+
+      // Ensure all required fields exist
+      const safeResult = {
+        visual: data.visual || { language: 'Unknown', complexity: 'N/A', lines: 0, steps: [] },
+        review: data.review || { bugs: [], improvements: [], strengths: [], info: [] },
+        variables: data.variables || [],
+        flow: data.flow || null
+      }
+
+      setResult(safeResult)
+      setActiveTab('visual')
+
+      // Save to server
+      try {
+        const historyResponse = await axios.post('http://localhost:5000/auth/history', {
+          code,
+          language: language === 'auto' ? safeResult.visual?.language || 'Unknown' : language,
+          preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
+          result: safeResult
+        }, authHeaders)
+        setHistory(prev => [historyResponse.data, ...prev])
+      } catch (histErr) {
+        console.error('Failed to save history:', histErr)
+      }
+
+    } catch (err) {
+      console.error('Analysis error:', err)
+      setError(err.response?.data?.error || 'Analysis failed. Please try again!')
+    } finally {
+      setLoading(false)
+    }
   }
-}
 
   const clearAll = () => {
     setCode('')
@@ -205,22 +205,22 @@ function App() {
   }
 
   const clearHistory = async () => {
-  try {
-    await axios.delete('http://localhost:5000/auth/history/clear', authHeaders)
-    setHistory([])
-  } catch (err) {
-    console.error('Failed to clear history:', err)
+    try {
+      await axios.delete('http://localhost:5000/auth/history/clear', authHeaders)
+      setHistory([])
+    } catch (err) {
+      console.error('Failed to clear history:', err)
+    }
   }
-}
 
   const pinHistory = async (id) => {
-  try {
-    const response = await axios.put(`http://localhost:5000/auth/history/${id}/pin`, {}, authHeaders)
-    setHistory(prev => prev.map(h => h.id === id ? response.data : h))
-  } catch (err) {
-    console.error('Failed to pin history:', err)
+    try {
+      const response = await axios.put(`http://localhost:5000/auth/history/${id}/pin`, {}, authHeaders)
+      setHistory(prev => prev.map(h => h.id === id ? response.data : h))
+    } catch (err) {
+      console.error('Failed to pin history:', err)
+    }
   }
-}
 
   const exportPDF = async () => {
     if (!result) {
@@ -826,7 +826,7 @@ function App() {
               </div>
             )}
 
-            {!loading && !error && !result && activeTab !== 'output' && (
+            {!loading && !error && !result && activeTab !== 'output' && activeTab !== 'algo' && activeTab !== 'explain' && activeTab !== 'executor' && activeTab !== 'fix' && (
               <div className="placeholder">
                 <div className="placeholder-icon">🔍</div>
                 <p>Paste your code and click <strong>Analyze Code</strong></p>
@@ -834,22 +834,22 @@ function App() {
               </div>
             )}
 
-            {!loading && safeResult && activeTab !== 'output' && (
+            {!loading && safeResult && activeTab !== 'output' && activeTab !== 'algo' && activeTab !== 'explain' && activeTab !== 'executor' && activeTab !== 'fix' && (
               <>
                 {activeTab === 'visual' && <Visualization data={safeResult.visual} />}
                 {activeTab === 'review' && <ReviewPanel data={safeResult.review} />}
                 {activeTab === 'vars' && <VariablesPanel data={safeResult.variables} />}
                 {activeTab === 'complexity' && <ComplexityGraph data={safeResult.visual} />}
                 {activeTab === 'flow' && <FlowDiagram data={safeResult.flow} />}
-                {activeTab === 'executor' && (
-                  <Executor code={code} language={language} />
-                )}
                 {activeTab === 'diff' && <CodeDiff />}
-                {activeTab === 'fix' && <CodeFixer code={code} language={language} />}
-                {activeTab === 'explain' && <CodeExplainer code={code} language={language} />}
-                {activeTab === 'algo' && <AlgoVisualizer code={code} language={language} />}
               </>
             )}
+
+            {/* Independent tabs — work without Analyze Code */}
+            {activeTab === 'executor' && <Executor code={code} language={language} />}
+            {activeTab === 'fix' && <CodeFixer code={code} language={language} />}
+            {activeTab === 'explain' && <CodeExplainer code={code} language={language} />}
+            {activeTab === 'algo' && <AlgoVisualizer code={code} language={language} />}
 
             {activeTab === 'output' && (
               <div className="run-output">

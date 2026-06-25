@@ -2,13 +2,13 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import axios from 'axios'
 
 const OPERATION_COLORS = {
-  VISIT:     { color: '#4ade80', bg: '#1a3a1a' },
-  CALL:      { color: '#7aa2f7', bg: '#1a2a4a' },
-  RETURN:    { color: '#f87171', bg: '#3a1a1a' },
-  COMPARE:   { color: '#fbbf24', bg: '#3a2a1a' },
-  SWAP:      { color: '#f97316', bg: '#3a2a1a' },
-  SPLIT:     { color: '#c084fc', bg: '#2a1a4a' },
-  MERGE:     { color: '#38bdf8', bg: '#1a2a3a' },
+  VISIT: { color: '#4ade80', bg: '#1a3a1a' },
+  CALL: { color: '#7aa2f7', bg: '#1a2a4a' },
+  RETURN: { color: '#f87171', bg: '#3a1a1a' },
+  COMPARE: { color: '#fbbf24', bg: '#3a2a1a' },
+  SWAP: { color: '#f97316', bg: '#3a2a1a' },
+  SPLIT: { color: '#c084fc', bg: '#2a1a4a' },
+  MERGE: { color: '#38bdf8', bg: '#1a2a3a' },
   BASE_CASE: { color: '#fbbf24', bg: '#3a3a1a' },
 }
 
@@ -213,6 +213,42 @@ function AlgoVisualizer({ code, language }) {
             </div>
           )}
 
+          {/* Array Visualization for sorting */}
+          {step?.array_state && Array.isArray(step.array_state) && step.array_state.length > 0 && (
+            <div className="av-array-viz">
+              <div className="av-panel-header">📊 Array State — {step.array_name || 'arr'}</div>
+              <div className="av-array-bars">
+                {step.array_state.map((val, i) => {
+                  const isActive = step.active_indices?.includes(i)
+                  const maxVal = Math.max(...step.array_state.filter(v => typeof v === 'number'))
+                  const height = maxVal > 0 ? Math.max((val / maxVal) * 140, 8) : 20
+                  const isSwap = step.operation === 'SWAP' && isActive
+                  const isCompare = step.operation === 'COMPARE' && isActive
+
+                  return (
+                    <div key={i} className="av-bar-wrapper">
+                      <div
+                        className="av-bar"
+                        style={{
+                          height: `${height}px`,
+                          background: isSwap ? '#f78166'
+                            : isCompare ? '#e3b341'
+                              : isActive ? '#58a6ff'
+                                : 'linear-gradient(180deg, #3fb950, #1a3a1a)',
+                          borderColor: isActive ? '#fff' : 'transparent',
+                          transition: 'all 0.3s ease',
+                          boxShadow: isActive ? '0 0 12px rgba(88,166,255,0.6)' : 'none'
+                        }}
+                      />
+                      <div className="av-bar-val">{val}</div>
+                      <div className="av-bar-idx">{i}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Main Split — Tree + Code */}
           <div className="av-main">
 
@@ -272,15 +308,15 @@ function AlgoVisualizer({ code, language }) {
 
                       const nodeColor = state === 'active' ? '#4ade80'
                         : state === 'visited' ? '#4ade8088'
-                        : '#2d3154'
+                          : '#2d3154'
 
                       const textColor = state === 'active' ? '#0f1117'
                         : state === 'visited' ? '#4ade80'
-                        : '#64748b'
+                          : '#64748b'
 
                       const bgColor = state === 'active' ? '#4ade80'
                         : state === 'visited' ? '#1a3a1a'
-                        : '#1a1d2e'
+                          : '#1a1d2e'
 
                       const R = 24
 
@@ -364,12 +400,8 @@ function AlgoVisualizer({ code, language }) {
               <span className="av-output-label">OUTPUT:</span>
               <div className="av-output-nodes">
                 {step.output.map((val, i) => (
-                  <div
-                    key={i}
-                    className="av-output-node"
-                    style={{ animationDelay: `${i * 0.1}s` }}
-                  >
-                    {val}
+                  <div key={i} className="av-output-node" style={{ animationDelay: `${i * 0.1}s` }}>
+                    <span className="av-output-node-val">{String(val)}</span>
                   </div>
                 ))}
               </div>
@@ -379,10 +411,10 @@ function AlgoVisualizer({ code, language }) {
           {/* Final Output */}
           {result.final_output && result.final_output.length > 0 && currentStep === result.steps.length - 1 && (
             <div className="av-final-output">
-              <span>🎉 Final Output:</span>
-              <div className="av-output-nodes">
+              <span className="av-final-label">🎉 Final Output:</span>
+              <div className="av-final-values">
                 {result.final_output.map((val, i) => (
-                  <div key={i} className="av-output-node final">{val}</div>
+                  <span key={i} className="av-final-val">{val}</span>
                 ))}
               </div>
             </div>
@@ -680,9 +712,11 @@ function AlgoVisualizer({ code, language }) {
           align-items: center;
           gap: 12px;
           padding: 10px 14px;
-          background: #0f1117;
-          border: 1px solid #2d3154;
+          background: var(--bg-secondary, #0f1117);
+          border: 1px solid var(--border, #2d3154);
           border-radius: 10px;
+          flex-wrap: wrap;
+          overflow-x: auto;
         }
         .av-output-label {
           font-size: 11px;
@@ -690,16 +724,20 @@ function AlgoVisualizer({ code, language }) {
           color: #4ade80;
           font-family: sans-serif;
           letter-spacing: 1px;
+          flex-shrink: 0;
         }
         .av-output-nodes {
           display: flex;
           gap: 6px;
           flex-wrap: wrap;
+          align-items: center;
         }
         .av-output-node {
-          width: 32px;
-          height: 32px;
-          border-radius: 50%;
+          min-width: 40px;
+          height: auto;
+          min-height: 36px;
+          padding: 6px 12px;
+          border-radius: 8px;
           background: #1a3a1a;
           border: 2px solid #4ade80;
           color: #4ade80;
@@ -710,6 +748,12 @@ function AlgoVisualizer({ code, language }) {
           justify-content: center;
           font-family: monospace;
           animation: popIn 0.3s ease both;
+          white-space: nowrap;
+        }
+        .av-output-node-val {
+          white-space: nowrap;
+          overflow: visible;
+          max-width: none;
         }
         .av-output-node.final {
           background: #4ade80;
@@ -727,11 +771,35 @@ function AlgoVisualizer({ code, language }) {
           background: #1a3a1a;
           border: 1px solid #4ade80;
           border-radius: 10px;
+          animation: fadeIn 0.5s ease;
+          flex-wrap: wrap;
+        }
+        .av-final-label {
           font-size: 13px;
           font-weight: 600;
           color: #4ade80;
           font-family: sans-serif;
-          animation: fadeIn 0.5s ease;
+          flex-shrink: 0;
+        }
+        .av-final-values {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .av-final-val {
+          font-size: 12px;
+          font-weight: 600;
+          color: #4ade80;
+          font-family: monospace;
+          background: rgba(74,222,128,0.1);
+          padding: 4px 10px;
+          border-radius: 6px;
+          border: 1px solid #4ade8044;
+          max-width: 200px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         .av-timeline {
           background: #0f1117;
@@ -762,6 +830,44 @@ function AlgoVisualizer({ code, language }) {
         .tl-op { font-size: 10px; font-weight: 700; min-width: 80px; text-transform: uppercase; }
         .tl-desc { font-size: 11px; color: #64748b; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .tl-line { font-size: 10px; color: #3d4268; font-family: monospace; }
+        .av-array-viz {
+          background: var(--bg-secondary, #0f1117);
+          border: 1px solid var(--border, #2d3154);
+          border-radius: 10px;
+          overflow: hidden;
+        }
+        .av-array-bars {
+          display: flex;
+          align-items: flex-end;
+          gap: 6px;
+          padding: 16px;
+          height: 200px;
+          overflow-x: auto;
+        }
+        .av-bar-wrapper {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+          flex-shrink: 0;
+        }
+        .av-bar {
+          width: 40px;
+          border-radius: 4px 4px 0 0;
+          border: 2px solid transparent;
+          min-height: 8px;
+        }
+        .av-bar-val {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--text-primary, #e2e8f0);
+          font-family: monospace;
+        }
+        .av-bar-idx {
+          font-size: 10px;
+          color: var(--text-tertiary, #3d4268);
+          font-family: monospace;
+        }
         @media (max-width: 768px) {
           .av-main { grid-template-columns: 1fr; }
         }
