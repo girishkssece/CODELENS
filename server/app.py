@@ -700,15 +700,12 @@ def visualize_algo():
     if language == "Python":
         try:
             result = build_algo_visualization(code)
-            if result.get('tree_nodes') and result.get('steps'):
-                return jsonify(result)
+            return jsonify(result)
         except Exception as e:
             print(f"Python engine error: {e}")
+            return jsonify({"error": f"Visualization failed: {str(e)}"}), 500
 
-    real_output = ""
-    trace = []
-
-    # Language-specific tracers
+    # Other languages — use code_tracer, transform to new schema
     tracer_map = {
         "JavaScript": trace_javascript,
         "C": trace_cpp,
@@ -725,91 +722,12 @@ def visualize_algo():
         try:
             real_output, trace = tracer_fn(code)
             result = build_visualization_from_trace(code, language, real_output, trace)
-            if result.get('tree_nodes') and result.get('steps'):
-                return jsonify(result)
+            return jsonify(result)
         except Exception as e:
             print(f"{language} tracer error: {e}")
+            return jsonify({"error": f"{language} visualization failed: {str(e)}"}), 500
 
-    # Final fallback — AI-generated visualization
-    prompt = f"""Analyze this {language} algorithm and return ONLY a JSON visualization.
-
-CODE:
-{code[:500]}
-
-ACTUAL OUTPUT FROM RUNNING THE CODE: {real_output[:200] if real_output else 'not available'}
-
-Return this EXACT JSON structure with ACCURATE values from the code.
-Build a proper execution tree with parent-child relationships.
-Each tree_node must have an appropriate depth value for tree layout.
-Give at least 5 steps and 3 tree nodes.
-
-{{
-  "algo_type": "recursion/sorting/searching/tree/graph/linear",
-  "title": "descriptive algorithm name",
-  "description": "what it does",
-  "time_complexity": "O(?)",
-  "space_complexity": "O(?)",
-  "tree_nodes": [
-    {{"id":"n1","value":"main","label":"main()","left":"n2","right":"n3","parent":null,"depth":0,"x_offset":0}},
-    {{"id":"n2","value":"step1","label":"step 1","left":null,"right":null,"parent":"n1","depth":1,"x_offset":0}},
-    {{"id":"n3","value":"step2","label":"step 2","left":null,"right":null,"parent":"n1","depth":1,"x_offset":0}}
-  ],
-  "steps": [
-    {{"id":"s1","node_id":"n1","operation":"CALL","description":"description of what happens","code_line":1,"visited_nodes":[],"output":[],"highlighted_nodes":["n1"],"edge_from":null,"edge_to":"n1"}},
-    {{"id":"s2","node_id":"n2","operation":"VISIT","description":"description","code_line":2,"visited_nodes":["n1"],"output":[],"highlighted_nodes":["n2"],"edge_from":"n1","edge_to":"n2"}}
-  ],
-  "final_output": ["{real_output.strip()[:100] if real_output else ''}"],
-  "total_steps": 5
-}}
-
-IMPORTANT: Use operation types from: CALL, RETURN, VISIT, COMPARE, SWAP, SPLIT, MERGE, BASE_CASE.
-tree_nodes MUST have proper depth values (0 for root, 1 for children, 2 for grandchildren, etc.)
-and parent references to form a valid tree structure."""
-
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            max_tokens=3000,
-            messages=[
-                {"role": "system", "content": "You are an algorithm visualization engine. Output ONLY valid JSON with exact values from the code. Build proper tree structures with parent-child relationships and correct depth values."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        text = response.choices[0].message.content.strip()
-        result = None
-        try:
-            result = json.loads(text)
-        except:
-            pass
-        if not result:
-            try:
-                clean = text.replace("```json","").replace("```","").strip()
-                result = json.loads(clean)
-            except:
-                pass
-        if not result:
-            try:
-                start = text.find('{')
-                end = text.rfind('}') + 1
-                if start != -1 and end > start:
-                    result = json.loads(text[start:end])
-            except:
-                pass
-        if result:
-            # Validate tree_nodes have required fields
-            if 'tree_nodes' in result:
-                for node in result['tree_nodes']:
-                    node.setdefault('depth', 0)
-                    node.setdefault('parent', None)
-                    node.setdefault('left', None)
-                    node.setdefault('right', None)
-                    node.setdefault('x_offset', 0)
-            return jsonify(result)
-        return jsonify({"error": "Failed to visualize. Try again!"}), 500
-    except Exception as e:
-        if '429' in str(e):
-            return jsonify({"error": "Rate limit hit. Wait 1 minute!"}), 429
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"error": f"Visualization for {language} is not supported yet."}), 400
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

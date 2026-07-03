@@ -1,353 +1,1089 @@
+"""
+Smart Algorithm Visualization Engine for CodeLens.
+Detects data structures at runtime via sys.settrace and builds
+adaptive, AlgoMaster-quality visualization data.
+
+Viz types: tree | array | dp_table | graph | simple
+"""
+
 import sys
 import io
-import traceback
-import copy
+import re
+import math
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 1 — HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+def _safe_repr(val, depth=0):
+    """JSON-safe serialization of any Python value."""
+    if depth > 3:
+        return str(val)[:30]
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val
+    if isinstance(val, str):
+        return val[:100]
+    if isinstance(val, (list, tuple)):
+        return [_safe_repr(v, depth + 1) for v in val[:30]]
+    if isinstance(val, dict):
+        return {str(k): _safe_repr(v, depth + 1) for k, v in list(val.items())[:15]}
+    if isinstance(val, set):
+        try:
+            items = sorted(val)
+        except TypeError:
+            items = list(val)
+        return [_safe_repr(x, depth + 1) for x in items[:15]]
+    try:
+        name = type(val).__name__
+        if name == 'deque':
+            return [_safe_repr(v, depth + 1) for v in list(val)[:30]]
+    except Exception:
+        pass
+    return str(val)[:50]
+
+
+def _is_tree_node(obj):
+    """Check if *obj* looks like a binary-tree node."""
+    if obj is None or isinstance(obj, (int, float, str, bool, list, dict, tuple, set, type)):
+        return False
+    has_children = hasattr(obj, 'left') or hasattr(obj, 'right')
+    has_value = hasattr(obj, 'val') or hasattr(obj, 'value') or hasattr(obj, 'data') or hasattr(obj, 'key')
+    return has_children and has_value
+
+
+def _get_node_val(obj):
+    """Get display value from a tree / linked-list node."""
+    for attr in ('val', 'value', 'data', 'key'):
+        if hasattr(obj, attr):
+            v = getattr(obj, attr)
+            if isinstance(v, (int, float, str)):
+                return v
+    return '?'
+
+
+def _serialize_tree(root):
+    """BFS-serialize a binary tree.
+
+    Returns
+    -------
+    nodes : list[dict]   — each has id, val, left, right, parent, depth, _obj_id
+    obj_to_sid : dict     — maps ``id(obj)`` → string-id like ``"tn1"``
+    """
+    if root is None or not _is_tree_node(root):
+        return [], {}
+
+    nodes = []
+    obj_to_sid = {}
+    queue = [(root, None, 0)]
+    seen = set()
+    counter = 0
+
+    while queue:
+        obj, parent_sid, depth = queue.pop(0)
+        if obj is None or id(obj) in seen or not _is_tree_node(obj):
+            continue
+        seen.add(id(obj))
+        counter += 1
+        sid = f"tn{counter}"
+        obj_to_sid[id(obj)] = sid
+
+        val = _get_node_val(obj)
+        left_obj = getattr(obj, 'left', None)
+        right_obj = getattr(obj, 'right', None)
+
+        left_oid = id(left_obj) if _is_tree_node(left_obj) else None
+        right_oid = id(right_obj) if _is_tree_node(right_obj) else None
+
+        nodes.append({
+            'id': sid,
+            'val': val,
+            'parent': parent_sid,
+            'depth': depth,
+            '_left_oid': left_oid,
+            '_right_oid': right_oid,
+            '_obj_id': id(obj),
+        })
+
+        if _is_tree_node(left_obj):
+            queue.append((left_obj, sid, depth + 1))
+        if _is_tree_node(right_obj):
+            queue.append((right_obj, sid, depth + 1))
+
+    # Resolve left / right string-ids
+    for n in nodes:
+        n['left'] = obj_to_sid.get(n.pop('_left_oid'))
+        n['right'] = obj_to_sid.get(n.pop('_right_oid'))
+
+    return nodes, obj_to_sid
+
+
+def _is_numeric_list(v):
+    return (isinstance(v, list) and 0 < len(v) <= 100
+            and all(isinstance(x, (int, float)) for x in v))
+
+
+def _is_adjacency_dict(d):
+    """dict where every value is a list/tuple/set → adjacency list."""
+    if not isinstance(d, dict) or len(d) < 2:
+        return False
+    return all(isinstance(v, (list, tuple, set)) for v in d.values())
+
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 2 — CODE-ANALYSIS HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+POINTER_NAMES = frozenset(
+    'i j k l r left right low high mid start end '
+    'ptr index pos pivot head tail front back p q'.split()
+)
+
+DP_NAMES = frozenset('dp memo table cache cost ways count f opt'.split())
+
+
+def _detect_traversal_type(code):
+    """Return (name, order_list) for tree-traversal code, else (None, None)."""
+    funcs = re.findall(r'def\s+(\w+)\s*\(', code)
+    for fn in funcs:
+        m = re.search(rf'def\s+{fn}\s*\([^)]*\)\s*:', code)
+        if not m:
+            continue
+        body = code[m.end():]
+        left_pos = right_pos = visit_pos = -1
+        for mx in re.finditer(rf'{fn}\s*\(.*\.left', body):
+            left_pos = mx.start(); break
+        for mx in re.finditer(rf'{fn}\s*\(.*\.right', body):
+            right_pos = mx.start(); break
+        for mx in re.finditer(r'(print\(|\.append\(|\.add\(|visit\(|yield )', body):
+            p = mx.start()
+            ctx = body[max(0, p - 20):p + 20]
+            if '.left' not in ctx and '.right' not in ctx:
+                visit_pos = p; break
+        if left_pos >= 0 and right_pos >= 0 and visit_pos >= 0:
+            if visit_pos < left_pos:
+                return 'Preorder Traversal', ['VISIT', 'LEFT', 'RIGHT']
+            elif visit_pos > right_pos:
+                return 'Postorder Traversal', ['LEFT', 'RIGHT', 'VISIT']
+            else:
+                return 'Inorder Traversal', ['LEFT', 'VISIT', 'RIGHT']
+    return None, None
+
+
+def _analyze_complexity(code):
+    """Return (title, time, space) based on code patterns."""
+    lo = code.lower()
+    checks = [
+        (['fibonacci', 'fib('], lambda: (
+            ('Fibonacci (DP)', 'O(n)', 'O(n)')
+            if any(x in lo for x in ['memo', 'dp', 'cache'])
+            else ('Fibonacci', 'O(2^n)', 'O(n)'))),
+        (['factorial', 'fact('], lambda: ('Factorial', 'O(n)', 'O(n)')),
+        (['hanoi'], lambda: ('Tower of Hanoi', 'O(2^n)', 'O(n)')),
+        (['merge_sort', 'mergesort'], lambda: ('Merge Sort', 'O(n log n)', 'O(n)')),
+        (['quick_sort', 'quicksort'], lambda: ('Quick Sort', 'O(n log n)', 'O(log n)')),
+        (['bubble_sort', 'bubblesort', 'bubble sort'], lambda: ('Bubble Sort', 'O(n²)', 'O(1)')),
+        (['selection_sort', 'selectionsort'], lambda: ('Selection Sort', 'O(n²)', 'O(1)')),
+        (['insertion_sort', 'insertionsort'], lambda: ('Insertion Sort', 'O(n²)', 'O(1)')),
+        (['binary_search', 'binarysearch'], lambda: ('Binary Search', 'O(log n)', 'O(1)')),
+        (['bfs', 'breadth_first'], lambda: ('BFS', 'O(V+E)', 'O(V)')),
+        (['dfs', 'depth_first'], lambda: ('DFS', 'O(V+E)', 'O(V)')),
+        (['inorder', 'in_order'], lambda: ('Inorder Traversal', 'O(n)', 'O(h)')),
+        (['preorder', 'pre_order'], lambda: ('Preorder Traversal', 'O(n)', 'O(h)')),
+        (['postorder', 'post_order'], lambda: ('Postorder Traversal', 'O(n)', 'O(h)')),
+        (['coin_change', 'coinchange', 'coin change'], lambda: ('Coin Change', 'O(amount × coins)', 'O(amount)')),
+        (['knapsack'], lambda: ('Knapsack', 'O(n × W)', 'O(n × W)')),
+        (['longest common', 'lcs'], lambda: ('LCS', 'O(m × n)', 'O(m × n)')),
+    ]
+    for keywords, factory in checks:
+        if any(k in lo for k in keywords):
+            return factory()
+
+    # Recursion detection
+    func_defs = re.findall(r'def\s+(\w+)\s*\(', code)
+    for fn in func_defs:
+        after = code[code.find(f'def {fn}') + len(f'def {fn}'):]
+        if re.search(rf'\b{fn}\s*\(', after):
+            calls = len(re.findall(rf'{fn}\s*\(', after))
+            if calls >= 2:
+                return f'Recursive {fn}', 'O(2^n)', 'O(n)'
+            return f'Recursive {fn}', 'O(n)', 'O(n)'
+
+    # Loop counting
+    loops = len(re.findall(r'\b(?:for|while)\s+', code))
+    if loops >= 3:
+        tc = 'O(n³)'
+    elif loops == 2:
+        tc = 'O(n²)'
+    elif loops == 1:
+        tc = 'O(n)'
+    else:
+        tc = 'O(1)'
+
+    name = func_defs[0] if func_defs else 'Code'
+    return f'{name} Execution', tc, 'O(1)'
+
+
+def _classify_op(event, line_text):
+    if event == 'call':
+        return 'CALL'
+    if event == 'return':
+        return 'RETURN'
+    if event == 'exception':
+        return 'ERROR'
+    s = line_text.strip().lower()
+    if 'swap' in s or ('temp' in s and '=' in s):
+        return 'SWAP'
+    if any(k in s for k in ['if ', 'elif ', '>', '<', '==', '!=']):
+        return 'COMPARE'
+    if any(k in s for k in ['for ', 'while ']):
+        return 'LOOP'
+    if 'print(' in s:
+        return 'PRINT'
+    if '.append(' in s or '.add(' in s or '.push(' in s:
+        return 'PUSH'
+    if '.pop(' in s or '.popleft(' in s:
+        return 'POP'
+    if 'return ' in s:
+        return 'RETURN'
+    if '=' in s and '==' not in s and '!=' not in s and '>=' not in s and '<=' not in s:
+        return 'ASSIGN'
+    return 'LINE'
+
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 3 — VIZ-TYPE-SPECIFIC BUILDERS
+# ═══════════════════════════════════════════════════════════════
+
+def _build_tree_viz(code, raw, final_out, tree_nodes, obj_to_sid, oid_info, title, tc, sc):
+    """Build tree visualization from raw trace events."""
+    trav_name, trav_order = _detect_traversal_type(code)
+    if trav_name:
+        title = trav_name
+
+    # ── filter interesting events ──
+    filtered = []
+    for i, ev in enumerate(raw):
+        fn = ev['func_name']
+        if fn == '__init__':
+            continue
+        event = ev['event']
+        line = ev['line_text']
+        if event in ('call', 'return'):
+            filtered.append((i, ev))
+        elif event == 'line':
+            ll = line.lower()
+            if any(k in ll for k in ['print(', '.append(', '.add(', 'visit(', 'yield ', 'result']):
+                filtered.append((i, ev))
+
+    # ── build steps ──
+    steps = []
+    visited_set = set()           # obj-ids already "processed"
+
+    for idx, (raw_idx, ev) in enumerate(filtered):
+        event = ev['event']
+        line_text = ev['line_text']
+        lineno = ev['lineno']
+        t_stack = ev.get('tree_stack', [])
+        t_param = ev.get('tree_node_id')
+
+        # active node = topmost non-None on the stack
+        active_oid = None
+        for tid in reversed(t_stack):
+            if tid is not None:
+                active_oid = tid
+                break
+        active_sid = obj_to_sid.get(active_oid)
+
+        # node states
+        node_states = {}
+        on_stack = set(x for x in t_stack if x is not None)
+        for tn in tree_nodes:
+            oid = tn['_obj_id']
+            if oid == active_oid:
+                node_states[tn['id']] = 'active'
+            elif oid in visited_set:
+                node_states[tn['id']] = 'visited'
+            elif oid in on_stack:
+                node_states[tn['id']] = 'processing'
+            else:
+                node_states[tn['id']] = 'unvisited'
+
+        # description
+        if event == 'call':
+            if t_param is None or t_param not in oid_info:
+                desc = 'Base case — node is null, return'
+                op = 'BASE_CASE'
+            else:
+                val = oid_info[t_param]['val']
+                prev_line = raw[raw_idx - 1]['line_text'] if raw_idx > 0 else ''
+                if '.left' in prev_line:
+                    desc = f'Go LEFT → node {val}'
+                elif '.right' in prev_line:
+                    desc = f'Go RIGHT → node {val}'
+                else:
+                    desc = f'Start traversal at node {val}'
+                op = 'CALL'
+        elif event == 'return':
+            if t_param and t_param in oid_info:
+                val = oid_info[t_param]['val']
+                desc = f'Done with subtree of node {val}'
+                visited_set.add(t_param)
+            else:
+                desc = 'Return from base case'
+            op = 'RETURN'
+        else:
+            val = oid_info.get(active_oid, {}).get('val', '?')
+            desc = f'Process node {val}'
+            op = 'VISIT'
+            if active_oid:
+                visited_set.add(active_oid)
+
+        # output snapshot
+        out = ev.get('output', '')
+        out_lines = [l for l in out.strip().split('\n') if l] if out.strip() else []
+
+        # active edge
+        active_edge = None
+        if active_sid:
+            for tn in tree_nodes:
+                if tn['id'] == active_sid and tn.get('parent'):
+                    active_edge = {'from': tn['parent'], 'to': active_sid}
+                    break
+
+        steps.append({
+            'id': idx + 1,
+            'code_line': lineno,
+            'operation': op,
+            'description': desc,
+            'variables': ev.get('locals', {}),
+            'output_so_far': out_lines,
+            'node_states': node_states,
+            'active_edge': active_edge,
+        })
+
+    if len(steps) > 80:
+        steps = steps[:40] + steps[-40:]
+
+    # strip internal fields from tree_nodes for the response
+    clean_nodes = [{k: v for k, v in n.items() if not k.startswith('_')} for n in tree_nodes]
+
+    return {
+        'viz_type': 'tree',
+        'title': title,
+        'time_complexity': tc,
+        'space_complexity': sc,
+        'traversal_order': trav_order,
+        'tree_nodes': clean_nodes,
+        'steps': steps,
+        'final_output': [final_out.strip()] if final_out.strip() else [],
+        'total_steps': len(steps),
+    }
+
+
+def _build_array_viz(code, raw, final_out, arr_name, title, tc, sc):
+    """Build array / sorting visualization."""
+    steps = []
+    prev_arr = None
+
+    for i, ev in enumerate(raw):
+        if ev['func_name'] == '__init__':
+            continue
+
+        lvars = ev.get('list_vars', {})
+        arr = lvars.get(arr_name)
+        if arr is None:
+            # try any numeric list
+            for k, v in lvars.items():
+                if k not in DP_NAMES:
+                    arr = v
+                    arr_name = k
+                    break
+
+        if arr is None and prev_arr is None:
+            continue
+
+        current_arr = list(arr) if arr is not None else list(prev_arr)
+
+        # Detect changes
+        changed = (prev_arr is None) or (current_arr != prev_arr)
+        if not changed and ev['event'] not in ('call', 'return'):
+            # skip unchanged line events to reduce noise
+            if len(steps) > 3:
+                prev_arr = current_arr
+                continue
+
+        # Pointers
+        lv = ev.get('locals', {})
+        pointers = []
+        for pname in POINTER_NAMES:
+            if pname in lv and isinstance(lv[pname], int):
+                val = lv[pname]
+                if 0 <= val < len(current_arr):
+                    pointers.append({'name': pname, 'index': val})
+
+        # Highlights
+        highlights = []
+        if prev_arr is not None and len(prev_arr) == len(current_arr):
+            for idx_c in range(len(current_arr)):
+                if current_arr[idx_c] != prev_arr[idx_c]:
+                    highlights.append({'index': idx_c, 'type': 'swap'})
+        for pt in pointers:
+            if not any(h['index'] == pt['index'] for h in highlights):
+                highlights.append({'index': pt['index'], 'type': 'compare'})
+
+        # Sorted indices (elements that haven't changed since they were last set)
+        sorted_indices = []
+
+        # Description
+        op = _classify_op(ev['event'], ev['line_text'])
+        line = ev['line_text']
+        desc = line if len(line) <= 60 else line[:57] + '...'
+        if op == 'SWAP' and len(pointers) >= 2:
+            p1, p2 = pointers[0], pointers[1]
+            desc = f"Swap {arr_name}[{p1['index']}] and {arr_name}[{p2['index']}]"
+        elif op == 'COMPARE' and len(pointers) >= 2:
+            p1, p2 = pointers[0], pointers[1]
+            v1 = current_arr[p1['index']] if p1['index'] < len(current_arr) else '?'
+            v2 = current_arr[p2['index']] if p2['index'] < len(current_arr) else '?'
+            desc = f"Compare {arr_name}[{p1['index']}]={v1} with {arr_name}[{p2['index']}]={v2}"
+
+        out = ev.get('output', '')
+        out_lines = [l for l in out.strip().split('\n') if l] if out.strip() else []
+
+        steps.append({
+            'id': len(steps) + 1,
+            'code_line': ev['lineno'],
+            'operation': op,
+            'description': desc,
+            'variables': {k: v for k, v in lv.items() if k != arr_name},
+            'output_so_far': out_lines,
+            'arrays': {arr_name: current_arr},
+            'pointers': pointers,
+            'highlights': highlights,
+            'sorted_indices': sorted_indices,
+        })
+
+        prev_arr = current_arr
+
+    if len(steps) > 80:
+        # keep first 35 + last 35 + 10 evenly sampled from middle
+        mid = steps[35:-35]
+        stride = max(1, len(mid) // 10)
+        sampled = mid[::stride][:10]
+        steps = steps[:35] + sampled + steps[-35:]
+        for idx_s, s in enumerate(steps):
+            s['id'] = idx_s + 1
+
+    return {
+        'viz_type': 'array',
+        'title': title,
+        'time_complexity': tc,
+        'space_complexity': sc,
+        'steps': steps,
+        'final_output': [final_out.strip()] if final_out.strip() else [],
+        'total_steps': len(steps),
+    }
+
+
+def _build_dp_viz(code, raw, final_out, dp_name, title, tc, sc):
+    """Build DP-table visualization."""
+    steps = []
+    prev_dp = None
+
+    # Try to find auxiliary data (e.g. coins, weights)
+    aux_keys = {}
+    for ev in raw[:10]:
+        for k, v in ev.get('locals', {}).items():
+            if k != dp_name and isinstance(v, list) and _is_numeric_list(v) and len(v) <= 20:
+                aux_keys[k] = v
+            elif k != dp_name and isinstance(v, (int, float)) and k not in POINTER_NAMES:
+                aux_keys[k] = v
+
+    for ev in raw:
+        if ev['func_name'] == '__init__':
+            continue
+
+        lvars = ev.get('list_vars', {})
+        dp_arr = lvars.get(dp_name)
+        if dp_arr is None:
+            # fallback: check all list_vars for DP-named vars
+            for k, v in lvars.items():
+                if k.lower() in DP_NAMES:
+                    dp_arr = v
+                    dp_name = k
+                    break
+
+        if dp_arr is None:
+            continue
+
+        current_dp = list(dp_arr)
+        changed = (prev_dp is None) or (current_dp != prev_dp)
+
+        if not changed and ev['event'] == 'line':
+            continue
+
+        # Find which cell changed
+        current_cell = None
+        filled_cells = []
+        if prev_dp is not None and len(prev_dp) == len(current_dp):
+            for ci in range(len(current_dp)):
+                if current_dp[ci] != prev_dp[ci]:
+                    current_cell = ci
+                if current_dp[ci] != 0 and current_dp[ci] is not None:
+                    filled_cells.append(ci)
+        else:
+            for ci in range(len(current_dp)):
+                if current_dp[ci] != 0 and current_dp[ci] is not None:
+                    filled_cells.append(ci)
+
+        # Aux data snapshot
+        lv = ev.get('locals', {})
+        aux_snap = {}
+        for ak in aux_keys:
+            if ak in lv:
+                aux_snap[ak] = _safe_repr(lv[ak])
+
+        op = _classify_op(ev['event'], ev['line_text'])
+        if current_cell is not None:
+            op = 'FILL'
+        desc = ev['line_text'] if len(ev['line_text']) <= 60 else ev['line_text'][:57] + '...'
+        if current_cell is not None:
+            desc = f"Set {dp_name}[{current_cell}] = {current_dp[current_cell]}"
+
+        out = ev.get('output', '')
+        out_lines = [l for l in out.strip().split('\n') if l] if out.strip() else []
+
+        steps.append({
+            'id': len(steps) + 1,
+            'code_line': ev['lineno'],
+            'operation': op,
+            'description': desc,
+            'variables': {k: v for k, v in lv.items()
+                          if k != dp_name and not isinstance(v, list)},
+            'output_so_far': out_lines,
+            'dp_table': current_dp,
+            'dp_name': dp_name,
+            'dp_dimensions': '1d',
+            'current_cell': current_cell,
+            'filled_cells': filled_cells,
+            'aux_data': aux_snap,
+        })
+        prev_dp = current_dp
+
+    if len(steps) > 80:
+        steps = steps[:35] + steps[-35:]
+        for ix, s in enumerate(steps):
+            s['id'] = ix + 1
+
+    return {
+        'viz_type': 'dp_table',
+        'title': title,
+        'time_complexity': tc,
+        'space_complexity': sc,
+        'steps': steps,
+        'final_output': [final_out.strip()] if final_out.strip() else [],
+        'total_steps': len(steps),
+    }
+
+
+def _build_graph_viz(code, raw, final_out, graph_adj, graph_var, title, tc, sc):
+    """Build graph BFS/DFS visualization."""
+    # Extract static structure
+    all_nodes = set()
+    edges = []
+    if isinstance(graph_adj, dict):
+        for node, neighbors in graph_adj.items():
+            all_nodes.add(node)
+            for nb in neighbors:
+                all_nodes.add(nb)
+                edges.append({'from': str(node), 'to': str(nb)})
+    all_nodes_list = sorted(all_nodes, key=lambda x: (isinstance(x, str), x))
+
+    steps = []
+    prev_visited = set()
+    prev_queue = []
+
+    # Heuristic names for BFS/DFS vars
+    visited_keys = {'visited', 'seen', 'explored', 'vis', 'used'}
+    queue_keys = {'queue', 'q', 'stack', 's', 'to_visit', 'frontier', 'bfs_queue'}
+    current_keys = {'node', 'current', 'curr', 'u', 'vertex', 'v', 'n'}
+
+    for ev in raw:
+        if ev['func_name'] == '__init__':
+            continue
+
+        lv = ev.get('locals', {})
+        sv = ev.get('set_vars', {})
+
+        # Find visited set
+        visited = None
+        for vk in visited_keys:
+            if vk in sv:
+                visited = sv[vk]
+                break
+        if visited is None:
+            for vk in visited_keys:
+                if vk in lv and isinstance(lv[vk], (list, set)):
+                    visited = set(lv[vk]) if isinstance(lv[vk], list) else lv[vk]
+                    break
+
+        # Find queue
+        queue_val = None
+        for qk in queue_keys:
+            if qk in lv:
+                qv = lv[qk]
+                if isinstance(qv, list):
+                    queue_val = qv
+                    break
+
+        # Find current node
+        current_node = None
+        for ck in current_keys:
+            if ck in lv and not isinstance(lv[ck], (list, dict, set)):
+                current_node = lv[ck]
+                break
+
+        # Skip if nothing changed
+        if visited == prev_visited and queue_val == prev_queue and ev['event'] == 'line':
+            continue
+
+        # Build node states
+        node_states = {}
+        for gn in all_nodes_list:
+            if str(gn) == str(current_node):
+                node_states[str(gn)] = 'active'
+            elif visited and gn in visited:
+                node_states[str(gn)] = 'visited'
+            elif queue_val and gn in queue_val:
+                node_states[str(gn)] = 'queued'
+            else:
+                node_states[str(gn)] = 'unvisited'
+
+        # Build edge states
+        edge_states = {}
+        if visited:
+            for e in edges:
+                fr, to = e['from'], e['to']
+                # Try to match original types
+                try:
+                    fr_orig = int(fr) if fr.isdigit() else fr
+                    to_orig = int(to) if to.isdigit() else to
+                except (ValueError, AttributeError):
+                    fr_orig, to_orig = fr, to
+                key = f"{fr}-{to}"
+                if fr_orig in visited and to_orig in visited:
+                    edge_states[key] = 'visited'
+                elif str(current_node) == fr:
+                    edge_states[key] = 'active'
+                else:
+                    edge_states[key] = 'default'
+
+        op = _classify_op(ev['event'], ev['line_text'])
+        desc = ev['line_text'] if len(ev['line_text']) <= 60 else ev['line_text'][:57] + '...'
+        if current_node is not None and op in ('LINE', 'ASSIGN', 'LOOP'):
+            if visited and len(visited) > len(prev_visited):
+                new_nodes = visited - prev_visited if prev_visited else set()
+                if new_nodes:
+                    desc = f"Visit node {current_node}, mark as visited"
+                    op = 'VISIT'
+
+        out = ev.get('output', '')
+        out_lines = [l for l in out.strip().split('\n') if l] if out.strip() else []
+
+        steps.append({
+            'id': len(steps) + 1,
+            'code_line': ev['lineno'],
+            'operation': op,
+            'description': desc,
+            'variables': {k: v for k, v in lv.items()
+                          if k != graph_var and k not in visited_keys},
+            'output_so_far': out_lines,
+            'node_states': node_states,
+            'edge_states': edge_states,
+            'queue': [str(x) for x in queue_val] if queue_val else [],
+        })
+
+        prev_visited = set(visited) if visited else prev_visited
+        prev_queue = list(queue_val) if queue_val else prev_queue
+
+    if len(steps) > 80:
+        steps = steps[:35] + steps[-35:]
+        for ix, s in enumerate(steps):
+            s['id'] = ix + 1
+
+    return {
+        'viz_type': 'graph',
+        'title': title,
+        'time_complexity': tc,
+        'space_complexity': sc,
+        'graph_nodes': [str(n) for n in all_nodes_list],
+        'graph_edges': edges,
+        'steps': steps,
+        'final_output': [final_out.strip()] if final_out.strip() else [],
+        'total_steps': len(steps),
+    }
+
+
+def _build_simple_viz(code, raw, final_out, title, tc, sc, error_msg=None):
+    """Build simple variable-tracking visualization."""
+    steps = []
+    prev_vars = {}
+
+    for ev in raw:
+        fn = ev['func_name']
+        if fn == '__init__':
+            continue
+
+        event = ev['event']
+        lv = ev.get('locals', {})
+
+        # Detect changed variables
+        changed_vars = []
+        for k, v in lv.items():
+            old = prev_vars.get(k)
+            if old != v:
+                changed_vars.append(k)
+
+        # Skip uninteresting events (no variable change, not call/return/print)
+        is_print = 'print(' in ev['line_text'].lower()
+        if not changed_vars and event == 'line' and not is_print:
+            if len(steps) > 2:
+                continue
+
+        op = _classify_op(event, ev['line_text'])
+        desc = ev['line_text'] if len(ev['line_text']) <= 60 else ev['line_text'][:57] + '...'
+
+        # Enhance descriptions
+        if op == 'ASSIGN' and changed_vars:
+            parts = []
+            for cv in changed_vars[:3]:
+                parts.append(f"{cv} = {_safe_repr(lv[cv])}")
+            desc = 'Set ' + ', '.join(parts)
+        elif op == 'PRINT':
+            desc = f'Print: {ev["line_text"].strip()}'
+        elif event == 'call' and fn != '<module>':
+            args = ', '.join(f'{k}={_safe_repr(v)}'
+                             for k, v in lv.items()
+                             if k not in ('self',) and not k.startswith('_'))
+            desc = f'Call {fn}({args[:40]})'
+        elif event == 'return' and fn != '<module>':
+            desc = f'Return from {fn}'
+
+        out = ev.get('output', '')
+        out_lines = [l for l in out.strip().split('\n') if l] if out.strip() else []
+
+        # Build call stack
+        stack = ev.get('call_stack', [])
+
+        steps.append({
+            'id': len(steps) + 1,
+            'code_line': ev['lineno'],
+            'operation': op,
+            'description': desc,
+            'variables': dict(lv),
+            'output_so_far': out_lines,
+            'changed_vars': changed_vars,
+            'call_stack': stack,
+        })
+        prev_vars = dict(lv)
+
+    if len(steps) > 80:
+        steps = steps[:35] + steps[-35:]
+        for ix, s in enumerate(steps):
+            s['id'] = ix + 1
+
+    if error_msg and (not steps or steps[-1]['operation'] != 'ERROR'):
+        steps.append({
+            'id': len(steps) + 1,
+            'code_line': 0,
+            'operation': 'ERROR',
+            'description': f'Error: {error_msg}',
+            'variables': {},
+            'output_so_far': [],
+            'changed_vars': [],
+            'call_stack': [],
+        })
+
+    return {
+        'viz_type': 'simple',
+        'title': title,
+        'time_complexity': tc,
+        'space_complexity': sc,
+        'steps': steps,
+        'final_output': [final_out.strip()] if final_out.strip() else [],
+        'total_steps': len(steps),
+    }
+
+
+def _fallback_result(code, final_out, error_msg=None):
+    """Minimal result when tracing fails entirely."""
+    title, tc, sc = _analyze_complexity(code)
+    return {
+        'viz_type': 'simple',
+        'title': title,
+        'time_complexity': tc,
+        'space_complexity': sc,
+        'steps': [{
+            'id': 1,
+            'code_line': 1,
+            'operation': 'ERROR' if error_msg else 'LINE',
+            'description': error_msg or code.split('\n')[0][:60],
+            'variables': {},
+            'output_so_far': [final_out.strip()] if final_out.strip() else [],
+            'changed_vars': [],
+            'call_stack': [],
+        }],
+        'final_output': [final_out.strip()] if final_out.strip() else [],
+        'total_steps': 1,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 4 — MAIN ENGINE
+# ═══════════════════════════════════════════════════════════════
 
 def build_algo_visualization(code):
-    """Execute Python code and build accurate visualization data"""
-    
-    steps = []
-    tree_nodes = {}
-    node_counter = [0]
-    call_stack = []
-    array_snapshots = []
-    
-    def safe_serialize(val, depth=0):
-        if depth > 3:
-            return str(val)
-        try:
-            if isinstance(val, (int, float, str, bool, type(None))):
-                return val
-            elif isinstance(val, (list, tuple)):
-                return [safe_serialize(v, depth+1) for v in val[:20]]
-            elif isinstance(val, dict):
-                return {str(k): safe_serialize(v, depth+1) for k, v in list(val.items())[:10]}
-            elif isinstance(val, set):
-                return list(val)[:10]
-            else:
-                return str(val)
-        except:
-            return str(val)
+    """Execute Python code with sys.settrace and build adaptive visualization.
 
-    visited_nodes = []
-    prev_arrays = {}
+    Returns a dict ready for JSON serialization with keys:
+        viz_type, title, time_complexity, space_complexity,
+        steps, final_output, total_steps, and type-specific data.
+    """
+    raw_events = []
+    code_lines = code.split('\n')
 
-    def trace_calls(frame, event, arg):
+    # ── tree-tracking state (updated during tracing) ──
+    tree_node_ids_seen = {}   # id(obj) → val
+    tree_call_stack = []      # stack of obj-ids for recursive tree calls
+
+    # ── tracer ──
+    def tracer(frame, event, arg):
         if frame.f_code.co_filename != '<string>':
-            return trace_calls
+            return tracer
+        if len(raw_events) > 3000:
+            return tracer
 
         lineno = frame.f_lineno
         func_name = frame.f_code.co_name
+        line_text = code_lines[lineno - 1].strip() if lineno <= len(code_lines) else ''
 
-        # Get local variables
+        # ── capture variables ──
         local_vars = {}
-        array_vars = {}
-        active_indices = []
+        tree_node_param_id = None
+        list_vars = {}
+        set_vars = {}
+        dict_vars = {}
 
         for k, v in frame.f_locals.items():
-            if not k.startswith('__'):
-                try:
-                    serialized = safe_serialize(v)
-                    local_vars[k] = serialized
-                    # Detect array/list variables
-                    if isinstance(v, list) and all(isinstance(x, (int, float)) for x in v):
-                        array_vars[k] = serialized
-                except:
-                    pass
+            if k.startswith('__'):
+                continue
+            try:
+                if _is_tree_node(v):
+                    val = _get_node_val(v)
+                    local_vars[k] = f"Node({val})"
+                    tree_node_ids_seen[id(v)] = val
+                    if k != 'self':
+                        tree_node_param_id = id(v)
+                elif isinstance(v, bool):
+                    local_vars[k] = v
+                elif isinstance(v, (int, float)):
+                    local_vars[k] = v
+                elif isinstance(v, str):
+                    local_vars[k] = v[:80]
+                elif v is None:
+                    local_vars[k] = None
+                elif isinstance(v, list):
+                    local_vars[k] = _safe_repr(v)
+                    if _is_numeric_list(v):
+                        list_vars[k] = list(v)
+                elif isinstance(v, set):
+                    local_vars[k] = _safe_repr(v)
+                    set_vars[k] = set(v)
+                elif isinstance(v, dict):
+                    local_vars[k] = _safe_repr(v)
+                    dict_vars[k] = dict(v)
+                elif isinstance(v, type):
+                    continue
+                else:
+                    try:
+                        if type(v).__name__ == 'deque':
+                            local_vars[k] = list(v)
+                        else:
+                            local_vars[k] = str(v)[:50]
+                    except Exception:
+                        local_vars[k] = str(v)[:50]
+            except Exception:
+                continue
 
-        # Detect active indices (i, j, mid, low, high etc.)
-        index_vars = ['i', 'j', 'mid', 'low', 'high', 'left', 'right', 'k']
-        for iv in index_vars:
-            if iv in local_vars and isinstance(local_vars[iv], int):
-                active_indices.append(local_vars[iv])
-
-        # Get current line text
+        # stdout snapshot
         try:
-            lines = code.split('\n')
-            current_line = lines[lineno - 1].strip() if lineno <= len(lines) else ''
-        except:
-            current_line = ''
+            output_snapshot = sys.stdout.getvalue()
+        except Exception:
+            output_snapshot = ''
 
-        # Build call stack
-        stack = []
+        # ── tree call-stack tracking ──
+        if func_name != '__init__':
+            if event == 'call':
+                if tree_node_param_id is not None:
+                    tree_call_stack.append(tree_node_param_id)
+                else:
+                    tree_call_stack.append(None)
+            elif event == 'return':
+                if tree_call_stack:
+                    top = tree_call_stack[-1]
+                    if top == tree_node_param_id or top is None:
+                        tree_call_stack.pop()
+
+        # ── build call stack info ──
+        stack_info = []
         f = frame
         while f is not None:
             if f.f_code.co_filename == '<string>':
-                stack.append({
+                stack_info.append({
                     'function': f.f_code.co_name,
-                    'line': f.f_lineno
+                    'line': f.f_lineno,
                 })
             f = f.f_back
-        stack.reverse()
+        stack_info.reverse()
 
-        # Handle function calls
-        node_id = None
-        if event == 'call':
-            args = []
-            for k, v in local_vars.items():
-                if not k.startswith('_'):
-                    args.append(f"{k}={str(v)[:8]}")
-                    if len(args) >= 2:
-                        break
+        raw_events.append({
+            'event': event,
+            'lineno': lineno,
+            'func_name': func_name,
+            'line_text': line_text,
+            'locals': local_vars,
+            'output': output_snapshot,
+            'tree_node_id': tree_node_param_id,
+            'tree_stack': list(tree_call_stack),
+            'list_vars': list_vars,
+            'set_vars': set_vars,
+            'dict_vars': dict_vars,
+            'call_stack': stack_info,
+        })
 
-            label = f"{func_name}({', '.join(args)})" if args else func_name
-            node_counter[0] += 1
-            node_id = f"n{node_counter[0]}"
+        return tracer
 
-            parent_id = call_stack[-1] if call_stack else None
-            depth = len(call_stack)
-
-            tree_nodes[node_id] = {
-                'id': node_id,
-                'value': label[:12],
-                'label': label[:20],
-                'left': None,
-                'right': None,
-                'parent': parent_id,
-                'depth': depth,
-                'x_offset': 0,
-                'func_name': func_name
-            }
-
-            if parent_id and parent_id in tree_nodes:
-                parent = tree_nodes[parent_id]
-                if parent['left'] is None:
-                    parent['left'] = node_id
-                elif parent['right'] is None:
-                    parent['right'] = node_id
-
-            call_stack.append(node_id)
-
-        elif event in ('return', 'exception'):
-            if call_stack:
-                node_id = call_stack[-1]
-                call_stack.pop()
-
-        current_node = call_stack[-1] if call_stack else (node_id or 'n1')
-
-        # Detect array changes
-        changed_array = None
-        changed_array_name = None
-        for arr_name, arr_val in array_vars.items():
-            prev = prev_arrays.get(arr_name)
-            if prev != arr_val:
-                changed_array = arr_val
-                changed_array_name = arr_name
-                prev_arrays[arr_name] = list(arr_val) if arr_val else arr_val
-
-        # Capture output
-        current_output = []
-        try:
-            out_val = sys.stdout.getvalue().strip()
-            if out_val:
-                current_output = out_val.split('\n')
-        except:
-            pass
-
-        operation = {
-            'call': 'CALL',
-            'return': 'RETURN',
-            'line': 'LINE',
-            'exception': 'ERROR'
-        }.get(event, 'LINE')
-
-        # Determine operation more specifically
-        if event == 'line':
-            if 'swap' in current_line.lower() or ('=' in current_line and '[' in current_line):
-                operation = 'SWAP'
-            elif 'if' in current_line and ('>' in current_line or '<' in current_line):
-                operation = 'COMPARE'
-            elif 'for' in current_line or 'while' in current_line:
-                operation = 'LOOP'
-            elif 'print' in current_line:
-                operation = 'PRINT'
-            elif '=' in current_line:
-                operation = 'ASSIGN'
-
-        highlighted = [current_node] if current_node else []
-
-        step = {
-            'id': f's{len(steps)+1}',
-            'node_id': current_node,
-            'operation': operation,
-            'description': f"{func_name}: {current_line}" if current_line else func_name,
-            'code_line': lineno,
-            'visited_nodes': list(visited_nodes),
-            'output': current_output,
-            'highlighted_nodes': highlighted,
-            'edge_from': tree_nodes[current_node]['parent'] if current_node in tree_nodes else None,
-            'edge_to': current_node,
-            'local_vars': local_vars,
-            'stack': stack,
-            'return_value': safe_serialize(arg) if event == 'return' else None,
-            # Array visualization data
-            'array_state': changed_array if changed_array else (list(prev_arrays.values())[-1] if prev_arrays else None),
-            'active_indices': active_indices,
-            'array_name': changed_array_name or (list(prev_arrays.keys())[-1] if prev_arrays else None)
-        }
-
-        if event == 'return' and current_node and current_node not in visited_nodes:
-            visited_nodes.append(current_node)
-
-        steps.append(step)
-        return trace_calls
-
-    # Capture stdout
+    # ── execute ──
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
+    namespace = {}
+    error_msg = None
 
     try:
         compiled = compile(code, '<string>', 'exec')
-        sys.settrace(trace_calls)
-        namespace = {}
+        sys.settrace(tracer)
         exec(compiled, namespace)
     except Exception as e:
-        steps.append({
-            'id': f's{len(steps)+1}',
-            'node_id': 'n1',
-            'operation': 'ERROR',
-            'description': str(e),
-            'code_line': 0,
-            'visited_nodes': [],
-            'output': [],
-            'highlighted_nodes': [],
-            'edge_from': None,
-            'edge_to': None,
-            'local_vars': {},
-            'stack': [],
-            'return_value': None,
-            'array_state': None,
-            'active_indices': [],
-            'array_name': None
-        })
+        error_msg = str(e)
     finally:
         sys.settrace(None)
         final_output = sys.stdout.getvalue()
         sys.stdout = old_stdout
 
-    # Convert tree nodes to list
-    nodes_list = list(tree_nodes.values())
+    if not raw_events:
+        return _fallback_result(code, final_output, error_msg)
 
-    # Fix layout
-    level_counts = {}
-    level_index = {}
-    for node in nodes_list:
-        d = node['depth']
-        level_counts[d] = level_counts.get(d, 0) + 1
+    # ═══════════ detect viz_type ═══════════
 
-    for node in nodes_list:
-        d = node['depth']
-        level_index[d] = level_index.get(d, 0)
-        total = level_counts[d]
-        idx = level_index[d]
-        node['x_offset'] = (idx - total/2) / max(total, 1)
-        level_index[d] += 1
+    # 1. Tree — check namespace for tree-node objects
+    tree_nodes = []
+    tree_id_map = {}
+    for k, v in namespace.items():
+        if k.startswith('__'):
+            continue
+        if _is_tree_node(v):
+            nodes, idmap = _serialize_tree(v)
+            if len(nodes) > len(tree_nodes):
+                tree_nodes = nodes
+                tree_id_map = idmap
+    has_tree = len(tree_nodes) >= 2
 
-    # Filter important steps
-    important_steps = []
-    seen_lines = set()
+    # 2. Graph — adjacency dict in namespace
+    has_graph = False
+    graph_adj = None
+    graph_var = None
+    for k, v in namespace.items():
+        if k.startswith('__'):
+            continue
+        if isinstance(v, dict) and _is_adjacency_dict(v):
+            has_graph = True
+            graph_adj = v
+            graph_var = k
+            break
 
-    for s in steps:
-        op = s['operation']
-        line = s['code_line']
-        arr = s.get('array_state')
-
-        # Always include these
-        if op in ('CALL', 'RETURN', 'ERROR', 'SWAP'):
-            important_steps.append(s)
-        elif op == 'COMPARE' and line not in seen_lines:
-            important_steps.append(s)
-            seen_lines.add(line)
-        elif arr and str(arr) != str(prev_arrays.get('_last')):
-            important_steps.append(s)
-            prev_arrays['_last'] = arr
-        elif op in ('PRINT', 'ASSIGN') and len(important_steps) < 30:
-            important_steps.append(s)
-
-    # Keep max 25 steps
-    if len(important_steps) > 25:
-        # Keep first 10 and last 10 and some middle
-        important_steps = important_steps[:10] + important_steps[len(important_steps)//2-2:len(important_steps)//2+3] + important_steps[-10:]
-
-    # Detect algo type and extract meaningful info
-    code_lower = code.lower()
-
-    # Check for specific algorithms first
-    if any(x in code_lower for x in ['fibonacci', 'fib(']):
-        algo_type, title, time_c, space_c = 'recursion', 'Fibonacci', 'O(2^n)', 'O(n)'
-    elif any(x in code_lower for x in ['factorial', 'fact(']):
-        algo_type, title, time_c, space_c = 'recursion', 'Factorial', 'O(n)', 'O(n)'
-    elif 'hanoi' in code_lower:
-        algo_type, title, time_c, space_c = 'recursion', 'Tower of Hanoi', 'O(2^n)', 'O(n)'
-    elif any(x in code_lower for x in ['merge_sort', 'mergesort']):
-        algo_type, title, time_c, space_c = 'sorting', 'Merge Sort', 'O(n log n)', 'O(n)'
-    elif any(x in code_lower for x in ['quick_sort', 'quicksort']):
-        algo_type, title, time_c, space_c = 'sorting', 'Quick Sort', 'O(n log n)', 'O(log n)'
-    elif 'bubble' in code_lower and 'sort' in code_lower:
-        algo_type, title, time_c, space_c = 'sorting', 'Bubble Sort', 'O(n²)', 'O(1)'
-    elif 'selection' in code_lower and 'sort' in code_lower:
-        algo_type, title, time_c, space_c = 'sorting', 'Selection Sort', 'O(n²)', 'O(1)'
-    elif 'insertion' in code_lower and 'sort' in code_lower:
-        algo_type, title, time_c, space_c = 'sorting', 'Insertion Sort', 'O(n²)', 'O(1)'
-    elif any(x in code_lower for x in ['binary_search', 'bisect']):
-        algo_type, title, time_c, space_c = 'searching', 'Binary Search', 'O(log n)', 'O(1)'
-    elif any(x in code_lower for x in ['bfs', 'breadth']):
-        algo_type, title, time_c, space_c = 'graph', 'BFS', 'O(V+E)', 'O(V)'
-    elif any(x in code_lower for x in ['dfs', 'depth_first']):
-        algo_type, title, time_c, space_c = 'graph', 'DFS', 'O(V+E)', 'O(V)'
-    elif any(x in code_lower for x in ['inorder', 'preorder', 'postorder', 'bst']):
-        algo_type, title, time_c, space_c = 'tree', 'Tree Traversal', 'O(n)', 'O(h)'
-    elif '.sort(' in code_lower or 'sorted(' in code_lower:
-        algo_type, title, time_c, space_c = 'sorting', 'Sort', 'O(n log n)', 'O(n)'
-    else:
-        # Check for recursion: a function that calls itself
-        import re as _re
-        func_defs = _re.findall(r'def\s+(\w+)\s*\(', code)
-        is_recursive = False
-        for fname in func_defs:
-            # Check if function name appears again after its def line
-            after_def = code[code.find(f'def {fname}') + len(f'def {fname}'):]
-            if _re.search(rf'\b{fname}\s*\(', after_def):
-                is_recursive = True
-                algo_type = 'recursion'
-                title = f'Recursive {fname}'
+    # 3. DP — list named dp/memo/table/etc.
+    has_dp = False
+    dp_var = None
+    for ev in raw_events:
+        for k in ev.get('list_vars', {}):
+            if k.lower() in DP_NAMES:
+                has_dp = True
+                dp_var = k
+                break
+        if has_dp:
+            break
+    if not has_dp:
+        for k, v in namespace.items():
+            if k.lower() in DP_NAMES and isinstance(v, list):
+                has_dp = True
+                dp_var = k
                 break
 
-        if not is_recursive:
-            if 'def ' in code:
-                # Extract first function name for title
-                first_func = func_defs[0] if func_defs else 'Function'
-                algo_type = 'linear'
-                title = f'{first_func} Execution'
-            elif any(x in code_lower for x in ['for ', 'while ']):
-                algo_type = 'linear'
-                title = 'Loop Execution'
-            else:
-                algo_type = 'linear'
-                title = 'Code Execution'
+    # 4. Array — numeric list (non-DP)
+    has_arrays = False
+    arr_var = None
+    for ev in raw_events:
+        for k, v in ev.get('list_vars', {}).items():
+            if k.lower() not in DP_NAMES and len(v) >= 2:
+                has_arrays = True
+                arr_var = k
+                break
+        if has_arrays:
+            break
 
-            # Estimate complexity for non-specific cases
-            nested_loops = len(_re.findall(r'(?:for|while)\s+', code))
-            if nested_loops >= 3:
-                time_c, space_c = 'O(n³)', 'O(1)'
-            elif nested_loops == 2:
-                time_c, space_c = 'O(n²)', 'O(1)'
-            elif nested_loops == 1:
-                time_c, space_c = 'O(n)', 'O(1)'
-            else:
-                time_c, space_c = 'O(1)', 'O(1)'
+    # priority: tree > graph > dp > array > simple
+    if has_tree:
+        viz_type = 'tree'
+    elif has_graph:
+        viz_type = 'graph'
+    elif has_dp:
+        viz_type = 'dp_table'
+    elif has_arrays:
+        viz_type = 'array'
+    else:
+        viz_type = 'simple'
 
-        if is_recursive:
-            time_c, space_c = 'O(2^n)', 'O(n)'
+    title, tc, sc = _analyze_complexity(code)
 
-    return {
-        'algo_type': algo_type,
-        'title': title,
-        'description': 'Real step-by-step execution',
-        'time_complexity': time_c,
-        'space_complexity': space_c,
-        'tree_nodes': nodes_list[:20],
-        'steps': important_steps[:25],
-        'final_output': [final_output.strip()] if final_output.strip() else [],
-        'total_steps': len(important_steps[:25])
-    }
+    # ═══════════ build visualization ═══════════
+
+    if viz_type == 'tree':
+        oid_info = {n['_obj_id']: {'sid': n['id'], 'val': n['val']}
+                    for n in tree_nodes}
+        return _build_tree_viz(
+            code, raw_events, final_output,
+            tree_nodes, tree_id_map, oid_info,
+            title, tc, sc)
+
+    if viz_type == 'graph':
+        return _build_graph_viz(
+            code, raw_events, final_output,
+            graph_adj, graph_var, title, tc, sc)
+
+    if viz_type == 'dp_table':
+        return _build_dp_viz(
+            code, raw_events, final_output,
+            dp_var, title, tc, sc)
+
+    if viz_type == 'array':
+        return _build_array_viz(
+            code, raw_events, final_output,
+            arr_var, title, tc, sc)
+
+    return _build_simple_viz(
+        code, raw_events, final_output,
+        title, tc, sc, error_msg)
