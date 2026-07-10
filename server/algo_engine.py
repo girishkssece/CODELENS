@@ -254,6 +254,22 @@ def _classify_op(event, line_text):
     return 'LINE'
 
 
+def _clean_vars(lv, exclude_key=None):
+    """Remove functions, modules, classes, and arrays from variables display."""
+    clean = {}
+    for k, v in lv.items():
+        if exclude_key and k == exclude_key:
+            continue
+        if isinstance(v, str) and ('<function' in v or '<module' in v or '<class' in v):
+            continue
+        if isinstance(v, list):
+            continue
+        if str(v).startswith('<'):
+            continue
+        clean[k] = v
+    return clean
+
+
 # ═══════════════════════════════════════════════════════════════
 # SECTION 3 — VIZ-TYPE-SPECIFIC BUILDERS
 # ═══════════════════════════════════════════════════════════════
@@ -359,7 +375,7 @@ def _build_tree_viz(code, raw, final_out, tree_nodes, obj_to_sid, oid_info, titl
             'code_line': lineno,
             'operation': op,
             'description': desc,
-            'variables': ev.get('locals', {}),
+            'variables': _clean_vars(ev.get('locals', {})),
             'output_so_far': out_lines,
             'node_states': node_states,
             'active_edge': active_edge,
@@ -385,9 +401,19 @@ def _build_tree_viz(code, raw, final_out, tree_nodes, obj_to_sid, oid_info, titl
 
 
 def _build_array_viz(code, raw, final_out, arr_name, title, tc, sc):
-    """Build array / sorting visualization."""
+    """Build array / sorting / searching visualization with pointer tracking."""
     steps = []
     prev_arr = None
+    prev_pointers = []
+
+    # Detect if this is a search (array doesn't change) or sort (array changes)
+    all_list_vars = []
+    for ev in raw:
+        lv = ev.get('list_vars', {})
+        if arr_name in lv:
+            all_list_vars.append(lv[arr_name])
+
+    is_search = len(all_list_vars) > 1 and all(a == all_list_vars[0] for a in all_list_vars)
 
     for i, ev in enumerate(raw):
         if ev['func_name'] == '__init__':
@@ -395,10 +421,10 @@ def _build_array_viz(code, raw, final_out, arr_name, title, tc, sc):
 
         lvars = ev.get('list_vars', {})
         arr = lvars.get(arr_name)
+
         if arr is None:
-            # try any numeric list
             for k, v in lvars.items():
-                if k not in DP_NAMES:
+                if k not in DP_NAMES and _is_numeric_list(v):
                     arr = v
                     arr_name = k
                     break
@@ -407,49 +433,109 @@ def _build_array_viz(code, raw, final_out, arr_name, title, tc, sc):
             continue
 
         current_arr = list(arr) if arr is not None else list(prev_arr)
-
-        # Detect changes
-        changed = (prev_arr is None) or (current_arr != prev_arr)
-        if not changed and ev['event'] not in ('call', 'return'):
-            # skip unchanged line events to reduce noise
-            if len(steps) > 3:
-                prev_arr = current_arr
-                continue
-
-        # Pointers
         lv = ev.get('locals', {})
+
+        # ── Detect ALL pointer variables ──
         pointers = []
         for pname in POINTER_NAMES:
-            if pname in lv and isinstance(lv[pname], int):
+            if pname in lv:
                 val = lv[pname]
-                if 0 <= val < len(current_arr):
+                if isinstance(val, int) and 0 <= val < len(current_arr):
                     pointers.append({'name': pname, 'index': val})
 
-        # Highlights
+        # Also capture any int variable that could be an index
+        for k, v in lv.items():
+            if k not in POINTER_NAMES and isinstance(v, int) and 0 <= v < len(current_arr):
+                if k not in [p['name'] for p in pointers]:
+                    pointers.append({'name': k, 'index': v})
+
+        # ── For search: only emit step when pointers change ──
+        if is_search:
+            ptr_sig = [(p['name'], p['index']) for p in pointers]
+            prev_ptr_sig = [(p['name'], p['index']) for p in prev_pointers]
+            if ptr_sig == prev_ptr_sig and len(steps) > 0:
+                prev_arr = current_arr
+                continue
+        else:
+            # For sort: skip if array unchanged and no pointer change
+            arr_changed = (prev_arr is None) or (current_arr != prev_arr)
+            ptr_changed = pointers != prev_pointers
+            if not arr_changed and not ptr_changed and len(steps) > 3:
+                prev_arr = current_arr
+                prev_pointers = pointers
+                continue
+
+        # ── Build highlights ──
         highlights = []
+
+        # Swap highlights (array changed)
         if prev_arr is not None and len(prev_arr) == len(current_arr):
             for idx_c in range(len(current_arr)):
                 if current_arr[idx_c] != prev_arr[idx_c]:
                     highlights.append({'index': idx_c, 'type': 'swap'})
-        for pt in pointers:
-            if not any(h['index'] == pt['index'] for h in highlights):
-                highlights.append({'index': pt['index'], 'type': 'compare'})
 
-        # Sorted indices (elements that haven't changed since they were last set)
+        # Pointer highlights
+        mid_ptr = next((p for p in pointers if p['name'] == 'mid'), None)
+        low_ptr = next((p for p in pointers if p['name'] in ('low', 'left', 'l', 'lo', 'start')), None)
+        high_ptr = next((p for p in pointers if p['name'] in ('high', 'right', 'r', 'hi', 'end')), None)
+
+        if mid_ptr and not any(h['index'] == mid_ptr['index'] for h in highlights):
+            highlights.append({'index': mid_ptr['index'], 'type': 'compare'})
+
+        # Sorted/eliminated indices (outside search window)
         sorted_indices = []
+        if is_search and low_ptr and high_ptr:
+            for si in range(len(current_arr)):
+                if si < low_ptr['index'] or si > high_ptr['index']:
+                    sorted_indices.append(si)
 
-        # Description
+        # ── Build description ──
         op = _classify_op(ev['event'], ev['line_text'])
         line = ev['line_text']
         desc = line if len(line) <= 60 else line[:57] + '...'
-        if op == 'SWAP' and len(pointers) >= 2:
-            p1, p2 = pointers[0], pointers[1]
-            desc = f"Swap {arr_name}[{p1['index']}] and {arr_name}[{p2['index']}]"
-        elif op == 'COMPARE' and len(pointers) >= 2:
-            p1, p2 = pointers[0], pointers[1]
-            v1 = current_arr[p1['index']] if p1['index'] < len(current_arr) else '?'
-            v2 = current_arr[p2['index']] if p2['index'] < len(current_arr) else '?'
-            desc = f"Compare {arr_name}[{p1['index']}]={v1} with {arr_name}[{p2['index']}]={v2}"
+
+        if is_search:
+            # Rich search descriptions
+            if mid_ptr and low_ptr and high_ptr:
+                mid_val = current_arr[mid_ptr['index']] if mid_ptr['index'] < len(current_arr) else '?'
+                target_val = lv.get('target', lv.get('key', lv.get('x', '?')))
+                if 'return' in line.lower() and 'mid' in line.lower():
+                    desc = f"✅ Found! arr[{mid_ptr['index']}]={mid_val} == target={target_val}"
+                    op = 'VISIT'
+                elif 'low' in line.lower() and '=' in line and 'mid' in line.lower():
+                    desc = f"arr[mid]={mid_val} < target={target_val} → move low to {mid_ptr['index'] + 1}"
+                    op = 'ASSIGN'
+                elif 'high' in line.lower() and '=' in line and 'mid' in line.lower():
+                    desc = f"arr[mid]={mid_val} > target={target_val} → move high to {mid_ptr['index'] - 1}"
+                    op = 'ASSIGN'
+                elif 'if' in line.lower():
+                    desc = f"Check arr[mid={mid_ptr['index']}]={mid_val} vs target={target_val}"
+                    op = 'COMPARE'
+                elif 'mid' in line.lower() and '=' in line:
+                    desc = f"mid = ({low_ptr['index']} + {high_ptr['index']}) // 2 = {mid_ptr['index']}"
+                    op = 'ASSIGN'
+            elif low_ptr or high_ptr:
+                parts = []
+                if low_ptr: parts.append(f"low={low_ptr['index']}")
+                if high_ptr: parts.append(f"high={high_ptr['index']}")
+                desc = f"Update pointers: {', '.join(parts)}"
+                op = 'ASSIGN'
+        else:
+            # Rich sort descriptions
+            if op == 'SWAP' and len(pointers) >= 2:
+                p1, p2 = pointers[0], pointers[1]
+                if p1['index'] < len(current_arr) and p2['index'] < len(current_arr):
+                    desc = f"Swap arr[{p1['index']}]={current_arr[p1['index']]} ↔ arr[{p2['index']}]={current_arr[p2['index']]}"
+            elif op == 'COMPARE' and len(pointers) >= 2:
+                p1, p2 = pointers[0], pointers[1]
+                if p1['index'] < len(current_arr) and p2['index'] < len(current_arr):
+                    v1 = current_arr[p1['index']]
+                    v2 = current_arr[p2['index']]
+                    sym = '>' if v1 > v2 else '<' if v1 < v2 else '=='
+                    desc = f"Compare arr[{p1['index']}]={v1} {sym} arr[{p2['index']}]={v2}"
+            elif 'pivot' in lv:
+                pivot_val = lv['pivot']
+                desc = f"Pivot = {pivot_val}, partitioning array"
 
         out = ev.get('output', '')
         out_lines = [l for l in out.strip().split('\n') if l] if out.strip() else []
@@ -459,7 +545,7 @@ def _build_array_viz(code, raw, final_out, arr_name, title, tc, sc):
             'code_line': ev['lineno'],
             'operation': op,
             'description': desc,
-            'variables': {k: v for k, v in lv.items() if k != arr_name},
+            'variables': _clean_vars(lv, exclude_key=arr_name),
             'output_so_far': out_lines,
             'arrays': {arr_name: current_arr},
             'pointers': pointers,
@@ -468,9 +554,10 @@ def _build_array_viz(code, raw, final_out, arr_name, title, tc, sc):
         })
 
         prev_arr = current_arr
+        prev_pointers = pointers
 
+    # Smart step limiting
     if len(steps) > 80:
-        # keep first 35 + last 35 + 10 evenly sampled from middle
         mid = steps[35:-35]
         stride = max(1, len(mid) // 10)
         sampled = mid[::stride][:10]
@@ -562,8 +649,7 @@ def _build_dp_viz(code, raw, final_out, dp_name, title, tc, sc):
             'code_line': ev['lineno'],
             'operation': op,
             'description': desc,
-            'variables': {k: v for k, v in lv.items()
-                          if k != dp_name and not isinstance(v, list)},
+            'variables': _clean_vars(lv, exclude_key=dp_name),
             'output_so_far': out_lines,
             'dp_table': current_dp,
             'dp_name': dp_name,
@@ -699,8 +785,7 @@ def _build_graph_viz(code, raw, final_out, graph_adj, graph_var, title, tc, sc):
             'code_line': ev['lineno'],
             'operation': op,
             'description': desc,
-            'variables': {k: v for k, v in lv.items()
-                          if k != graph_var and k not in visited_keys},
+            'variables': _clean_vars(lv, exclude_key=graph_var),
             'output_so_far': out_lines,
             'node_states': node_states,
             'edge_states': edge_states,
@@ -784,7 +869,7 @@ def _build_simple_viz(code, raw, final_out, title, tc, sc, error_msg=None):
             'code_line': ev['lineno'],
             'operation': op,
             'description': desc,
-            'variables': dict(lv),
+            'variables': _clean_vars(lv),
             'output_so_far': out_lines,
             'changed_vars': changed_vars,
             'call_stack': stack,

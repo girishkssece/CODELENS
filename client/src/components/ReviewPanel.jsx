@@ -1,5 +1,10 @@
 function ReviewPanel({ data }) {
-  if (!data) return null
+  if (!data || typeof data !== 'object') return (
+    <div style={{ padding: '20px', color: '#64748b', textAlign: 'center' }}>
+      <span style={{ fontSize: '36px', opacity: 0.4 }}>✅</span>
+      <p>No review data available</p>
+    </div>
+  )
 
   const sections = [
     {
@@ -28,11 +33,38 @@ function ReviewPanel({ data }) {
     }
   ]
 
+  // Normalize items — handle cases where items are strings or have different key names
+  const normalizeItem = (item) => {
+    if (typeof item === 'string') {
+      return { title: 'Note', detail: item }
+    }
+    if (typeof item === 'object' && item !== null) {
+      return {
+        title: item.title || item.name || item.issue || 'Item',
+        detail: item.detail || item.description || item.explanation || item.message || JSON.stringify(item)
+      }
+    }
+    return { title: 'Note', detail: String(item) }
+  }
+
+  const hasAnyItems = sections.some(section => {
+    const items = data[section.key]
+    return Array.isArray(items) && items.length > 0
+  })
+
+  if (!hasAnyItems) return (
+    <div style={{ padding: '20px', color: '#64748b', textAlign: 'center' }}>
+      <span style={{ fontSize: '36px', opacity: 0.4 }}>✅</span>
+      <p>No issues found — code looks good!</p>
+    </div>
+  )
+
   return (
     <div className="review-panel">
       {sections.map((section) => {
-        const items = data[section.key]
-        if (!items || items.length === 0) return null
+        const rawItems = data[section.key]
+        if (!Array.isArray(rawItems) || rawItems.length === 0) return null
+        const items = rawItems.map(normalizeItem)
 
         return (
           <div className="review-section" key={section.key}>

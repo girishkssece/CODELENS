@@ -45,7 +45,11 @@ const NODE_COLORS = {
 function TreeVisualizer({ result, step }) {
   const layout = useMemo(() => {
     if (!result?.tree_nodes?.length) return null
-    const nodes = result.tree_nodes
+
+    // Safety: filter invalid nodes
+    const nodes = result.tree_nodes.filter(n => n && n.id)
+    if (!nodes.length) return null
+
     const nodeMap = {}
     nodes.forEach(n => { nodeMap[n.id] = { ...n } })
 
@@ -189,31 +193,39 @@ function TreeVisualizer({ result, step }) {
    ═══════════════════════════════════════════════════════════════ */
 
 function ArrayVisualizer({ step }) {
-  if (!step?.arrays) return null
+  if (!step?.arrays || typeof step.arrays !== 'object') return null
 
-  const entries = Object.entries(step.arrays)
+  const entries = Object.entries(step.arrays).filter(([, value]) => Array.isArray(value))
   if (entries.length === 0) return null
-  const [arrName, arr] = entries[0]
-  if (!Array.isArray(arr) || arr.length === 0) return null
 
-  const maxVal = Math.max(...arr.filter(v => typeof v === 'number'))
-  const pointers = step.pointers || []
-  const highlights = step.highlights || []
+  const [arrName, arr] = entries[0]
+  const safeArr = Array.isArray(arr)
+    ? arr.map((value) => (value === null || value === undefined ? 0 : value))
+    : []
+
+  if (safeArr.length === 0) return null
+
+  const numericArr = safeArr.filter((value) => typeof value === 'number' && Number.isFinite(value))
+  if (numericArr.length === 0) return null
+
+  const maxVal = Math.max(...numericArr) || 1
+  const pointers = Array.isArray(step.pointers) ? step.pointers : []
+  const highlights = Array.isArray(step.highlights) ? step.highlights : []
 
   const getBarColor = (idx) => {
-    const hl = highlights.find(h => h.index === idx)
+    const hl = highlights.find((h) => h?.index === idx)
     if (hl) {
-      if (hl.type === 'swap')    return '#f97316'
+      if (hl.type === 'swap') return '#f97316'
       if (hl.type === 'compare') return '#fbbf24'
-      if (hl.type === 'sorted')  return '#4ade80'
+      if (hl.type === 'sorted') return '#4ade80'
       return '#38bdf8'
     }
-    if (step.sorted_indices?.includes(idx)) return '#4ade8088'
+    if (Array.isArray(step.sorted_indices) && step.sorted_indices.includes(idx)) return '#4ade8088'
     return 'linear-gradient(180deg, #3d6bff, #1a2a4a)'
   }
 
   const getBarGlow = (idx) => {
-    const hl = highlights.find(h => h.index === idx)
+    const hl = highlights.find((h) => h?.index === idx)
     if (hl) return `0 0 12px ${getBarColor(idx)}66`
     return 'none'
   }
@@ -223,14 +235,15 @@ function ArrayVisualizer({ step }) {
       <div className="av-panel-header">📊 Array — {arrName}</div>
       <div className="av-array-container">
         <div className="av-array-bars">
-          {arr.map((val, i) => {
-            const height = maxVal > 0 ? Math.max((val / maxVal) * 160, 12) : 24
+          {safeArr.map((val, i) => {
+            const safeVal = typeof val === 'number' && !isNaN(val) ? val : 0
+            const height = maxVal > 0 ? Math.max((safeVal / maxVal) * 160, 12) : 24
             const color = getBarColor(i)
-            const ptr = pointers.find(p => p.index === i)
+            const ptr = pointers.find((p) => p?.index === i)
 
             return (
               <div key={i} className="av-bar-col">
-                <div className="av-bar-val-top">{val}</div>
+                <div className="av-bar-val-top">{safeVal}</div>
                 <div className="av-bar"
                   style={{
                     height: `${height}px`,
@@ -659,13 +672,22 @@ function AlgoVisualizer({ code, language }) {
 
           {/* Main Split — Viz + Code */}
           <div className="av-main">
-            {/* Left: Adaptive Visualization */}
             <div className="av-viz-left">
-              {vizType === 'tree' && <TreeVisualizer result={result} step={step} />}
-              {vizType === 'array' && <ArrayVisualizer step={step} />}
-              {vizType === 'dp_table' && <DPVisualizer step={step} />}
-              {vizType === 'graph' && <GraphVisualizer result={result} step={step} />}
-              {vizType === 'simple' && <SimpleVisualizer step={step} />}
+              {vizType === 'tree' && result?.tree_nodes?.length > 0 && (
+                <TreeVisualizer result={result} step={step} />
+              )}
+              {vizType === 'array' && step?.arrays && (
+                <ArrayVisualizer step={step} />
+              )}
+              {vizType === 'dp_table' && step?.dp_table && (
+                <DPVisualizer step={step} />
+              )}
+              {vizType === 'graph' && result?.graph_nodes?.length > 0 && (
+                <GraphVisualizer result={result} step={step} />
+              )}
+              {(vizType === 'simple' || (!step?.arrays && !result?.tree_nodes && !step?.dp_table)) && (
+                <SimpleVisualizer step={step} />
+              )}
 
               {/* Variables panel (for non-simple types) */}
               {vizType !== 'simple' && step?.variables && Object.keys(step.variables).length > 0 && (
@@ -683,7 +705,6 @@ function AlgoVisualizer({ code, language }) {
               )}
             </div>
 
-            {/* Right: Code Panel */}
             <CodePanel code={code} activeLine={step?.code_line} />
           </div>
 

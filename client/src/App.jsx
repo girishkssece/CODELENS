@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import CodeEditor from './components/CodeEditor'
 import Visualization from './components/Visualization'
 import ReviewPanel from './components/ReviewPanel'
@@ -14,6 +14,51 @@ import CodeTemplates from './components/CodeTemplates'
 import CodeExplainer from './components/CodeExplainer'
 import AlgoVisualizer from './components/AlgoVisualizer'
 import Login from './components/Login'
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  componentDidCatch(error) {
+    console.error('Render error:', error)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          padding: '20px',
+          background: '#1a1d2e',
+          border: '1px solid #f87171',
+          borderRadius: '10px',
+          color: '#f87171',
+          fontFamily: 'sans-serif',
+          fontSize: '13px'
+        }}>
+          ⚠️ Something went wrong rendering this result.
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            style={{
+              marginLeft: '12px',
+              padding: '4px 10px',
+              background: '#2d1a1a',
+              border: '1px solid #f87171',
+              borderRadius: '6px',
+              color: '#f87171',
+              cursor: 'pointer'
+            }}
+          >
+            Try Again
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 function App() {
   const [code, setCode] = useState('')
@@ -41,13 +86,23 @@ function App() {
   })
   const [token, setToken] = useState(() => localStorage.getItem('codelens_token') || null)
 
-  // Safety check for result rendering
-  const safeResult = result ? {
-    visual: result.visual || { language: 'Unknown', complexity: 'N/A', lines: 0, steps: [] },
-    review: result.review || { bugs: [], improvements: [], strengths: [], info: [] },
-    variables: result.variables || [],
-    flow: result.flow || null
-  } : null
+  // Safety check for result rendering — deep normalization
+  const safeResult = result ? (() => {
+    const review = (result.review && typeof result.review === 'object') ? result.review : {}
+    return {
+      visual: (result.visual && typeof result.visual === 'object') 
+        ? { ...result.visual, steps: Array.isArray(result.visual.steps) ? result.visual.steps : [] }
+        : { language: 'Unknown', complexity: 'N/A', lines: 0, steps: [] },
+      review: {
+        bugs: Array.isArray(review.bugs) ? review.bugs : [],
+        improvements: Array.isArray(review.improvements) ? review.improvements : [],
+        strengths: Array.isArray(review.strengths) ? review.strengths : [],
+        info: Array.isArray(review.info) ? review.info : []
+      },
+      variables: Array.isArray(result.variables) ? result.variables : [],
+      flow: result.flow || null
+    }
+  })() : null
 
   const authHeaders = {
     headers: { Authorization: `Bearer ${token}` }
@@ -461,7 +516,8 @@ function App() {
   }
 
   return (
-    <div className={`app-container ${darkMode ? 'dark' : 'light'}`}>
+    <ErrorBoundary>
+      <div className={`app-container ${darkMode ? 'dark' : 'light'}`}>
       {/* Header */}
       <div className="header">
         <div className="header-left">
@@ -474,7 +530,7 @@ function App() {
           <span className="tagline">Visual Code Analyzer & Reviewer</span>
         </div>
         <div className="header-right">
-          <span className="badge">Powered by LLaMA 3</span>
+          <span className="badge">Powered by Gemini</span>
           <div className="user-info">
             <div className="user-avatar">
               {user.name.charAt(0).toUpperCase()}
@@ -813,87 +869,90 @@ function App() {
           </div>
 
           <div className="output-area">
-            {loading && (
-              <div className="loading">
-                <div className="spinner"></div>
-                <span>Analyzing your code with LLaMA 3...</span>
-              </div>
-            )}
+            <ErrorBoundary>
+              {loading && (
+                <div className="loading">
+                  <div className="spinner"></div>
+                  <span>Analyzing your code ...</span>
+                </div>
+              )}
 
-            {error && (
-              <div className="error-box">
-                ⚠️ {error}
-              </div>
-            )}
+              {error && (
+                <div className="error-box">
+                  ⚠️ {error}
+                </div>
+              )}
 
-            {!loading && !error && !result && activeTab !== 'output' && activeTab !== 'algo' && activeTab !== 'explain' && activeTab !== 'executor' && activeTab !== 'fix' && (
-              <div className="placeholder">
-                <div className="placeholder-icon">🔍</div>
-                <p>Paste your code and click <strong>Analyze Code</strong></p>
-                <small>Step-by-step visual breakdown + smart review</small>
-              </div>
-            )}
+              {!loading && !error && !result && activeTab !== 'output' && activeTab !== 'algo' && activeTab !== 'explain' && activeTab !== 'executor' && activeTab !== 'fix' && (
+                <div className="placeholder">
+                  <div className="placeholder-icon">🔍</div>
+                  <p>Paste your code and click <strong>Analyze Code</strong></p>
+                  <small>Step-by-step visual breakdown + smart review</small>
+                </div>
+              )}
 
-            {!loading && safeResult && activeTab !== 'output' && activeTab !== 'algo' && activeTab !== 'explain' && activeTab !== 'executor' && activeTab !== 'fix' && (
-              <>
-                {activeTab === 'visual' && <Visualization data={safeResult.visual} />}
-                {activeTab === 'review' && <ReviewPanel data={safeResult.review} />}
-                {activeTab === 'vars' && <VariablesPanel data={safeResult.variables} />}
-                {activeTab === 'complexity' && <ComplexityGraph data={safeResult.visual} />}
-                {activeTab === 'flow' && <FlowDiagram data={safeResult.flow} />}
-                {activeTab === 'diff' && <CodeDiff />}
-              </>
-            )}
+              {!loading && safeResult && activeTab !== 'output' && activeTab !== 'algo' && activeTab !== 'explain' && activeTab !== 'executor' && activeTab !== 'fix' && (
+                <>
+                  {activeTab === 'visual' && <Visualization data={safeResult.visual} />}
+                  {activeTab === 'review' && <ReviewPanel data={safeResult.review} />}
+                  {activeTab === 'vars' && <VariablesPanel data={safeResult.variables} />}
+                  {activeTab === 'complexity' && <ComplexityGraph data={safeResult.visual} />}
+                  {activeTab === 'flow' && <FlowDiagram data={safeResult.flow} />}
+                  {activeTab === 'diff' && <CodeDiff />}
+                </>
+              )}
 
-            {/* Independent tabs — work without Analyze Code */}
-            {activeTab === 'executor' && <Executor code={code} language={language} />}
-            {activeTab === 'fix' && <CodeFixer code={code} language={language} />}
-            {activeTab === 'explain' && <CodeExplainer code={code} language={language} />}
-            {activeTab === 'algo' && <AlgoVisualizer code={code} language={language} />}
+              {/* Independent tabs — work without Analyze Code */}
+              {activeTab === 'executor' && <Executor code={code} language={language} />}
+              {activeTab === 'fix' && <CodeFixer code={code} language={language} />}
+              {activeTab === 'explain' && <CodeExplainer code={code} language={language} />}
+              {activeTab === 'algo' && <AlgoVisualizer code={code} language={language} />}
 
-            {activeTab === 'output' && (
-              <div className="run-output">
-                {runLoading && (
-                  <div className="loading">
-                    <div className="spinner"></div>
-                    <span>Running your code...</span>
-                  </div>
-                )}
-                {!runLoading && runOutput && (
-                  <>
-                    {runOutput.output && (
-                      <div className="output-box success">
-                        <div className="output-label">✅ Output</div>
-                        <pre>{runOutput.output}</pre>
-                      </div>
-                    )}
-                    {runOutput.error && (
-                      <div className="output-box error">
-                        <div className="output-label">❌ Error</div>
-                        <pre>{runOutput.error}</pre>
-                      </div>
-                    )}
-                    {!runOutput.output && !runOutput.error && (
-                      <div className="output-box success">
-                        <div className="output-label">✅ Output</div>
-                        <pre>Program ran successfully with no output.</pre>
-                      </div>
-                    )}
-                  </>
-                )}
-                {!runLoading && !runOutput && (
-                  <div className="placeholder">
-                    <div className="placeholder-icon">⚡</div>
-                    <p>Click <strong>Run Code</strong> to execute</p>
-                    <small>Supports Python, JavaScript, C, C++, Java, Go, Ruby, PHP, Rust</small>
-                  </div>
-                )}
-              </div>
-            )}
+              {activeTab === 'output' && (
+                <div className="run-output">
+                  {runLoading && (
+                    <div className="loading">
+                      <div className="spinner"></div>
+                      <span>Running your code...</span>
+                    </div>
+                  )}
+                  {!runLoading && runOutput && (
+                    <>
+                      {runOutput.output && (
+                        <div className="output-box success">
+                          <div className="output-label">✅ Output</div>
+                          <pre>{runOutput.output}</pre>
+                        </div>
+                      )}
+                      {runOutput.error && (
+                        <div className="output-box error">
+                          <div className="output-label">❌ Error</div>
+                          <pre>{runOutput.error}</pre>
+                        </div>
+                      )}
+                      {!runOutput.output && !runOutput.error && (
+                        <div className="output-box success">
+                          <div className="output-label">✅ Output</div>
+                          <pre>Program ran successfully with no output.</pre>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {!runLoading && !runOutput && (
+                    <div className="placeholder">
+                      <div className="placeholder-icon">⚡</div>
+                      <p>Click <strong>Run Code</strong> to execute</p>
+                      <small>Supports Python, JavaScript, C, C++, Java, Go, Ruby, PHP, Rust</small>
+                    </div>
+                  )}
+                </div>
+              )}
+            </ErrorBoundary>
           </div>
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   )
 }
 

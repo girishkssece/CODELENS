@@ -7,3 +7,4 @@ flask-bcrypt
 flask-sqlalchemy
 scikit-learn
 numpy
+google-genai

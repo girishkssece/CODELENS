@@ -1,5 +1,18 @@
 function VariablesPanel({ data }) {
-  if (!data || data.length === 0) {
+  // Normalize data — handle non-array or missing data
+  let variables = data
+  if (!variables) {
+    variables = []
+  } else if (!Array.isArray(variables)) {
+    // If it's an object, try to extract an array from common keys
+    if (typeof variables === 'object') {
+      variables = variables.variables || variables.vars || Object.values(variables).find(v => Array.isArray(v)) || []
+    } else {
+      variables = []
+    }
+  }
+
+  if (variables.length === 0) {
     return (
       <div className="no-vars">
         <span>📦</span>
@@ -7,6 +20,24 @@ function VariablesPanel({ data }) {
       </div>
     )
   }
+
+  // Normalize each variable item
+  const normalizeVar = (v) => {
+    if (typeof v === 'string') {
+      return { name: v, type: 'unknown', initial_value: '—', role: '—' }
+    }
+    if (typeof v !== 'object' || v === null) {
+      return { name: String(v), type: 'unknown', initial_value: '—', role: '—' }
+    }
+    return {
+      name: v.name || v.variable || v.var_name || '—',
+      type: v.type || v.data_type || v.dataType || 'unknown',
+      initial_value: v.initial_value || v.initialValue || v.value || v.default || '—',
+      role: v.role || v.description || v.purpose || v.usage || '—'
+    }
+  }
+
+  const normalizedVars = variables.map(normalizeVar)
 
   return (
     <div className="variables-panel">
@@ -21,12 +52,12 @@ function VariablesPanel({ data }) {
             </tr>
           </thead>
           <tbody>
-            {data.map((v, index) => (
+            {normalizedVars.map((v, index) => (
               <tr key={index}>
                 <td className="var-name">{v.name}</td>
-                <td className="var-type">{v.type || 'unknown'}</td>
-                <td className="var-value">{v.initial_value || '—'}</td>
-                <td className="var-role">{v.role || '—'}</td>
+                <td className="var-type">{v.type}</td>
+                <td className="var-value">{String(v.initial_value)}</td>
+                <td className="var-role">{v.role}</td>
               </tr>
             ))}
           </tbody>
