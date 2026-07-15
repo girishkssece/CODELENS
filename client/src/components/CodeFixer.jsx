@@ -19,7 +19,7 @@ function CodeFixer({ code, language }) {
     setResult(null)
 
     try {
-      const response = await axios.post('http://localhost:5000/fix', {
+      const response = await axios.post(`${API_BASE}/fix`, {
         code,
         language
       })

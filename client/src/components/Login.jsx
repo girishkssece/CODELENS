@@ -26,7 +26,7 @@ function Login({ onLogin }) {
         ? { name: form.name, email: form.email, password: form.password }
         : { email: form.email, password: form.password }
 
-      const response = await axios.post(`http://localhost:5000${endpoint}`, payload)
+      const response = await axios.post(`${API_BASE}${endpoint}`, payload)
       const { token, user } = response.data
 
       localStorage.setItem('codelens_token', token)

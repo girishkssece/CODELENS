@@ -24,7 +24,7 @@ function CodeExplainer({ code, language }) {
         setResult(null)
 
         try {
-            const response = await axios.post('http://localhost:5000/explain', {
+            const response = await axios.post(`${API_BASE}/explain`, {
                 code,
                 language,
                 level

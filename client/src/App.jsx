@@ -4,6 +4,7 @@ import Visualization from './components/Visualization'
 import ReviewPanel from './components/ReviewPanel'
 import VariablesPanel from './components/VariablesPanel'
 import axios from 'axios'
+import API_BASE from './config'
 import './App.css'
 import ComplexityGraph from './components/ComplexityGraph'
 import FlowDiagram from './components/FlowDiagram'
@@ -115,7 +116,7 @@ function App() {
 
   const loadHistory = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/auth/history', authHeaders)
+      const response = await axios.get(`${API_BASE}/auth/history`, authHeaders)
       setHistory(response.data)
     } catch (err) {
       console.error('Failed to load history:', err)
@@ -132,7 +133,7 @@ function App() {
     setResult(null)
 
     try {
-      const response = await axios.post('http://localhost:5000/analyze', {
+      const response = await axios.post(`${API_BASE}/analyze`, {
         code,
         language
       })
@@ -157,7 +158,7 @@ function App() {
 
       // Save to server
       try {
-        const historyResponse = await axios.post('http://localhost:5000/auth/history', {
+        const historyResponse = await axios.post(`${API_BASE}/auth/history`, {
           code,
           language: language === 'auto' ? safeResult.visual?.language || 'Unknown' : language,
           preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
@@ -188,7 +189,7 @@ function App() {
   const newCode = async () => {
     if (code.trim() && result) {
       try {
-        const response = await axios.post('http://localhost:5000/auth/history', {
+        const response = await axios.post(`${API_BASE}/auth/history`, {
           code,
           language,
           preview: code.slice(0, 60) + (code.length > 60 ? '...' : ''),
@@ -210,7 +211,7 @@ function App() {
   const detectLanguage = async (codeText) => {
     if (!codeText || codeText.length < 10) return
     try {
-      const response = await axios.post('http://localhost:5000/detect-language', {
+      const response = await axios.post(`${API_BASE}/detect-language`, {
         code: codeText
       })
       setMlDetection(response.data)
@@ -237,7 +238,7 @@ function App() {
     setActiveTab('output')
 
     try {
-      const response = await axios.post('http://localhost:5000/run', {
+      const response = await axios.post(`${API_BASE}/run`, {
         code,
         language
       })
@@ -261,7 +262,7 @@ function App() {
 
   const clearHistory = async () => {
     try {
-      await axios.delete('http://localhost:5000/auth/history/clear', authHeaders)
+      await axios.delete(`${API_BASE}/auth/history/clear`, authHeaders)
       setHistory([])
     } catch (err) {
       console.error('Failed to clear history:', err)
@@ -270,7 +271,7 @@ function App() {
 
   const pinHistory = async (id) => {
     try {
-      const response = await axios.put(`http://localhost:5000/auth/history/${id}/pin`, {}, authHeaders)
+      const response = await axios.put(`${API_BASE}/auth/history/${id}/pin`, {}, authHeaders)
       setHistory(prev => prev.map(h => h.id === id ? response.data : h))
     } catch (err) {
       console.error('Failed to pin history:', err)
@@ -732,7 +733,7 @@ function App() {
                         onClick={async (e) => {
                           e.stopPropagation()
                           try {
-                            await axios.delete(`http://localhost:5000/auth/history/${item.id}`, authHeaders)
+                            await axios.delete(`${API_BASE}/auth/history/${item.id}`, authHeaders)
                             setHistory(prev => prev.filter(h => h.id !== item.id))
                           } catch (err) {
                             console.error('Failed to delete history:', err)

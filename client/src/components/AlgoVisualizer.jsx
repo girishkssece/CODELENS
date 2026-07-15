@@ -548,7 +548,7 @@ function AlgoVisualizer({ code, language }) {
       setCurrentStep(0); setIsPlaying(false)
     }
     try {
-      const resp = await axios.post('http://localhost:5000/visualize-algo', { code, language })
+      const resp = await axios.post(`${API_BASE}/visualize-algo`, { code, language })
       setResult(resp.data)
       if (retryCount > 0) setError(null)
     } catch (err) {

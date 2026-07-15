@@ -26,7 +26,7 @@ function Executor({ code, language }) {
     setHasExecuted(false)
 
     try {
-      const response = await axios.post('http://localhost:5000/execute', {
+      const response = await axios.post(`${API_BASE}/execute`, {
         code,
         language
       })
