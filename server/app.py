@@ -27,7 +27,12 @@ from step_builder import build_execution_steps
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://your-frontend-url.com",
+    "*"
+])
 
 # ── Gemini model config ──
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
