@@ -198,6 +198,23 @@ with app.app_context():
     db.create_all()
 
 
+@app.route("/check-languages", methods=["GET"])
+def check_languages():
+    import shutil
+    checks = {
+        'python': shutil.which('python') or shutil.which('python3'),
+        'node': shutil.which('node'),
+        'javac': shutil.which('javac'),
+        'gcc': shutil.which('gcc'),
+        'g++': shutil.which('g++'),
+        'go': shutil.which('go'),
+        'rustc': shutil.which('rustc'),
+        'ruby': shutil.which('ruby'),
+        'php': shutil.which('php'),
+    }
+    return jsonify(checks)
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json()
