@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import API_BASE from '../config'
 
 const LEVELS = [
     { id: 'eli5', label: '👶 ELI5', desc: 'Like I\'m 5' },

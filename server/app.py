@@ -464,21 +464,32 @@ def detect_language():
     
 @app.route("/execute", methods=["POST"])
 def execute():
-    data = request.get_json()
-    code = data.get("code", "")
-    language = data.get("language", "Python")
+    try:
+        data = request.get_json()
+        code = data.get("code", "")
+        language = data.get("language", "Python")
+        print(f"EXECUTE: lang={language}, code={code[:50]}")
 
-    if not code:
-        return jsonify({"error": "No code provided"}), 400
+        if not code:
+            return jsonify({"error": "No code provided"}), 400
 
-    # Real execution for Python
-    if language == "Python":
-        try:
-            result = execute_python_steps(code)
-            result["mode"] = "real"
-            return jsonify(result)
-        except Exception as e:
-            return jsonify({"error": str(e), "steps": [], "total_steps": 0}), 500
+        # Real execution for Python
+        if language == "Python":
+            try:
+                result = execute_python_steps(code)
+                result["mode"] = "real"
+                print(f"Python result: {len(result.get('steps', []))} steps")
+                return jsonify(result)
+            except Exception as e:
+                print(f"Python executor error: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({"error": str(e), "steps": [], "total_steps": 0}), 500
+    except Exception as e:
+        print(f"Execute route error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
     # For other languages — run code then build steps locally (no AI)
     try:

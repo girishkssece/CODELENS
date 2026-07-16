@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
+import API_BASE from '../config'
 
 function Executor({ code, language }) {
   const [steps, setSteps] = useState([])
