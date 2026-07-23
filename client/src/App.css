@@ -680,6 +680,45 @@
 
 .templates-wrapper > div:last-child { padding: 12px; }
 
+/* ===== DASHBOARD ===== */
+.btn.dashboard {
+  background: var(--bg-secondary);
+  color: #39c5cf;
+  border-color: var(--border);
+}
+
+.btn.dashboard:hover {
+  background: var(--bg-hover);
+  border-color: #39c5cf;
+}
+
+.dashboard-wrapper {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: sans-serif;
+}
+
+.dashboard-content {
+  padding: 16px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
   .workspace { grid-template-columns: 1fr; }

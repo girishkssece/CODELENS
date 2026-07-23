@@ -15,6 +15,7 @@ import CodeTemplates from './components/CodeTemplates'
 import CodeExplainer from './components/CodeExplainer'
 import AlgoVisualizer from './components/AlgoVisualizer'
 import Login from './components/Login'
+import MetricsDashboard from './components/MetricsDashboard'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -78,6 +79,7 @@ function App() {
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [showDashboard, setShowDashboard] = useState(false)
   const [mlDetection, setMlDetection] = useState(null)
   const [user, setUser] = useState(() => {
     try {
@@ -595,6 +597,13 @@ function App() {
         </button>
 
         <button
+          className="btn dashboard"
+          onClick={() => setShowDashboard(!showDashboard)}
+        >
+          📊 Dashboard
+        </button>
+
+        <button
           className="btn templates"
           onClick={() => setShowTemplates(!showTemplates)}
         >
@@ -615,6 +624,18 @@ function App() {
           <button className="font-btn" onClick={() => setFontSize(p => Math.min(20, p + 1))}>A+</button>
         </div>
       </div>
+
+      {showDashboard && (
+        <div className="dashboard-wrapper">
+          <div className="dashboard-header">
+            <span>📊 Code Analytics Dashboard</span>
+            <button className="btn secondary" onClick={() => setShowDashboard(false)}>✕ Close</button>
+          </div>
+          <div className="dashboard-content">
+            <MetricsDashboard token={token} />
+          </div>
+        </div>
+      )}
 
       {showTemplates && (
         <div className="templates-wrapper">

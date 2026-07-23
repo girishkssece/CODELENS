@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import traceback
 import re
+import shutil
 from ml_detector import detector
 from executor import execute_python_steps
 from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
@@ -38,6 +39,26 @@ CORS(app, origins=[
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 GEMINI_MODEL = "gemini-2.5-flash"
 GROQ_MODEL = "qwen/qwen3.6-27b"
+
+
+def is_language_available(language):
+    runtime_map = {
+        'Python': ['python', 'python3'],
+        'JavaScript': ['node'],
+        'Java': ['javac'],
+        'C': ['gcc'],
+        'C++': ['g++'],
+        'Go': ['go'],
+        'Rust': ['rustc'],
+        'Ruby': ['ruby'],
+        'PHP': ['php'],
+    }
+    cmds = runtime_map.get(language, [])
+    return any(shutil.which(cmd) for cmd in cmds)
+
+
+UNAVAILABLE_MSG = "{lang} runtime is not installed on the server. Run CodeLens locally for full language support."
+
 
 def _extract_json(text):
     """Robustly extract a JSON object from LLM output.
@@ -198,6 +219,100 @@ with app.app_context():
     db.create_all()
 
 
+@app.route("/metrics", methods=["GET"])
+@jwt_required()
+def get_metrics():
+    user_id = get_jwt_identity()
+
+    try:
+        histories = History.query.filter_by(user_id=user_id).all()
+
+        if not histories:
+            return jsonify({
+                "total_analyses": 0,
+                "languages": {},
+                "complexity_distribution": {},
+                "bugs_found": 0,
+                "improvements_found": 0,
+                "avg_quality_score": 0,
+                "most_analyzed_language": "N/A",
+                "timeline": []
+            })
+
+        language_counts = {}
+        complexity_counts = {}
+        total_bugs = 0
+        total_improvements = 0
+        total_strengths = 0
+        quality_scores = []
+        timeline = []
+
+        for h in histories:
+            lang = h.language or 'Unknown'
+            language_counts[lang] = language_counts.get(lang, 0) + 1
+
+            try:
+                result = json.loads(h.result) if h.result else {}
+            except Exception:
+                result = {}
+
+            visual = result.get('visual', {})
+            review = result.get('review', {})
+
+            complexity = visual.get('complexity', 'Unknown')
+            if complexity:
+                if 'n²' in complexity or 'n^2' in complexity or 'n2' in complexity:
+                    c_key = 'O(n²)'
+                elif 'n log' in complexity or 'nlog' in complexity:
+                    c_key = 'O(n log n)'
+                elif 'log' in complexity:
+                    c_key = 'O(log n)'
+                elif complexity.strip() in ('O(n)', 'linear', 'O(n)'):
+                    c_key = 'O(n)'
+                elif complexity.strip() in ('O(1)', 'constant'):
+                    c_key = 'O(1)'
+                elif '2^n' in complexity or '2ⁿ' in complexity:
+                    c_key = 'O(2^n)'
+                else:
+                    c_key = complexity[:10]
+                complexity_counts[c_key] = complexity_counts.get(c_key, 0) + 1
+
+            bugs = review.get('bugs', [])
+            improvements = review.get('improvements', [])
+            strengths = review.get('strengths', [])
+            total_bugs += len(bugs)
+            total_improvements += len(improvements)
+            total_strengths += len(strengths)
+
+            if bugs or strengths:
+                score = max(0, min(100, 70 + len(strengths) * 5 - len(bugs) * 10))
+                quality_scores.append(score)
+
+            timeline.append({
+                "date": h.created_at.strftime('%Y-%m-%d'),
+                "language": lang,
+                "lines": visual.get('lines', 0)
+            })
+
+        most_analyzed = max(language_counts, key=language_counts.get) if language_counts else 'N/A'
+        avg_quality = round(sum(quality_scores) / len(quality_scores)) if quality_scores else 0
+
+        return jsonify({
+            "total_analyses": len(histories),
+            "languages": language_counts,
+            "complexity_distribution": complexity_counts,
+            "bugs_found": total_bugs,
+            "improvements_found": total_improvements,
+            "strengths_found": total_strengths,
+            "avg_quality_score": avg_quality,
+            "most_analyzed_language": most_analyzed,
+            "timeline": timeline[-30:]
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/check-languages", methods=["GET"])
 def check_languages():
     import shutil
@@ -346,6 +461,13 @@ def run_code():
     code = data.get("code", "")
     language = data.get("language", "Python")
 
+    if not is_language_available(language):
+        return jsonify({
+            "output": "",
+            "error": UNAVAILABLE_MSG.format(lang=language),
+            "returncode": 1
+        })
+
     if not code:
         return jsonify({"error": "No code provided"}), 400
 
@@ -486,6 +608,26 @@ def execute():
         code = data.get("code", "")
         language = data.get("language", "Python")
         print(f"EXECUTE: lang={language}, code={code[:50]}")
+
+        if not is_language_available(language):
+            return jsonify({
+                "mode": "unavailable",
+                "language": language,
+                "steps": [{
+                    "event": "line",
+                    "line": 1,
+                    "current_line": f"{language} not available on server",
+                    "func_name": "main",
+                    "local_vars": {},
+                    "global_vars": {},
+                    "stack": [{"function": "main", "line": 1}],
+                    "output": [],
+                    "final_output": UNAVAILABLE_MSG.format(lang=language)
+                }],
+                "total_steps": 1,
+                "final_output": UNAVAILABLE_MSG.format(lang=language),
+                "error": None
+            })
 
         if not code:
             return jsonify({"error": "No code provided"}), 400
@@ -808,6 +950,9 @@ def visualize_algo():
         except:
             language = "Python"
 
+    # For non-Python languages that aren't available, skip real execution
+    lang_available = is_language_available(language)
+
     # ── Python: use real execution engine ──
     if language == "Python":
         try:
@@ -822,7 +967,7 @@ def visualize_algo():
     real_output = ""
     real_error = ""
     try:
-        if language == "JavaScript":
+        if language == "JavaScript" and lang_available:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
                 f.write(code)
                 temp_path = f.name
@@ -831,7 +976,7 @@ def visualize_algo():
             real_error = r.stderr.strip()
             os.unlink(temp_path)
 
-        elif language in ["C", "C++"]:
+        elif language in ["C", "C++"] and lang_available:
             suffix = '.c' if language == "C" else '.cpp'
             compiler = "gcc" if language == "C" else "g++"
             with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False) as f:
@@ -848,7 +993,7 @@ def visualize_algo():
                 real_error = cr.stderr.strip()
             os.unlink(temp_path)
 
-        elif language == "Java":
+        elif language == "Java" and lang_available:
             class_match = re.search(r'(?:public\s+)?class\s+(\w+)', code)
             class_name = class_match.group(1) if class_match else 'Main'
             proper_path = os.path.join(tempfile.gettempdir(), f"{class_name}.java")
@@ -865,7 +1010,7 @@ def visualize_algo():
             class_file = os.path.join(tempfile.gettempdir(), f"{class_name}.class")
             if os.path.exists(class_file): os.unlink(class_file)
 
-        elif language == "Go":
+        elif language == "Go" and lang_available:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.go', delete=False) as f:
                 f.write(code)
                 temp_path = f.name
@@ -874,7 +1019,7 @@ def visualize_algo():
             real_error = r.stderr.strip()
             os.unlink(temp_path)
 
-        elif language == "Rust":
+        elif language == "Rust" and lang_available:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.rs', delete=False) as f:
                 f.write(code)
                 temp_path = f.name
@@ -888,7 +1033,7 @@ def visualize_algo():
                 real_error = cr.stderr.strip()
             os.unlink(temp_path)
 
-        elif language == "Ruby":
+        elif language == "Ruby" and lang_available:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.rb', delete=False) as f:
                 f.write(code)
                 temp_path = f.name
@@ -896,7 +1041,7 @@ def visualize_algo():
             real_output = r.stdout.strip()
             os.unlink(temp_path)
 
-        elif language == "PHP":
+        elif language == "PHP" and lang_available:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.php', delete=False) as f:
                 f.write(code)
                 temp_path = f.name
@@ -904,7 +1049,7 @@ def visualize_algo():
             real_output = r.stdout.strip()
             os.unlink(temp_path)
 
-        elif language == "Python":
+        elif language == "Python" and lang_available:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                 f.write(code)
                 temp_path = f.name
