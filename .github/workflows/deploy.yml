@@ -1,0 +1,130 @@
+name: 🚀 CodeLens CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: Test Backend ──
+  test-backend:
+    name: 🐍 Test Python Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: |
+          cd server
+          pip install -r requirements.txt
+
+      - name: ✅ Test Flask app starts
+        run: |
+          cd server
+          python -c "from app import app; print('✅ Flask app imports successfully')"
+
+      - name: ✅ Test ML detector
+        run: |
+          cd server
+          python -c "
+          from ml_detector import detector
+          result = detector.detect('print(\"hello world\")')
+          assert result['language'] == 'Python', f'Expected Python, got {result[\"language\"]}'
+          print(f'✅ ML detector works: {result[\"language\"]} ({result[\"confidence\"]}% confidence)')
+          "
+
+  # ── Job 2: Test Frontend ──
+  test-frontend:
+    name: ⚛️ Test React Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: client/package-lock.json
+
+      - name: 📦 Install dependencies
+        run: |
+          cd client
+          npm ci
+
+      - name: 🔨 Build React app
+        run: |
+          cd client
+          npm run build
+        env:
+          VITE_API_URL: https://codelens-81rz.onrender.com
+
+      - name: ✅ Check build output
+        run: |
+          ls client/dist
+          echo "✅ React build successful"
+
+  # ── Job 3: Deploy ──
+  deploy:
+    name: 🌐 Deploy to Render
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: client/package-lock.json
+
+      - name: 📦 Install frontend dependencies
+        run: |
+          cd client
+          npm ci
+
+      - name: 🔨 Build React frontend
+        run: |
+          cd client
+          npm run build
+        env:
+          VITE_API_URL: https://codelens-81rz.onrender.com
+
+      - name: 📋 Copy build to server/static
+        run: |
+          rm -rf server/static
+          cp -r client/dist server/static
+          echo "✅ Static files copied"
+
+      - name: 📤 Commit static build
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add server/static
+          git diff --staged --quiet || git commit -m "🚀 Auto-deploy: update static build [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🚀 Trigger Render Deploy
+        run: |
+          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+
+      - name: ✅ Deploy complete
+        run: echo "🎉 CodeLens deployed successfully!"
